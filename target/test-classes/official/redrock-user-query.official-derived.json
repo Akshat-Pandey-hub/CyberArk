@@ -1,0 +1,97 @@
+{
+  "success": true,
+  "Result": {
+    "IsAggregate": false,
+    "Count": 44,
+    "Columns": [
+      {
+        "Name": "ID",
+        "IsHidden": false,
+        "DDName": "ID",
+        "Title": "ID",
+        "DDTitle": "ID",
+        "Description": "Row Identifier (primary key)",
+        "Type": 12,
+        "Format": null,
+        "Width": 0,
+        "TableKey": "Primary",
+        "ForeignKey": null
+      },
+      {
+        "Name": "Username",
+        "IsHidden": false,
+        "DDName": "Username",
+        "Title": "Username",
+        "DDTitle": "Username",
+        "Description": "User name.",
+        "Type": 12,
+        "Format": null,
+        "Width": 0,
+        "TableKey": "Alternate",
+        "ForeignKey": null
+      }
+    ],
+    "FullCount": 44,
+    "Results": [
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "e7ed3e73-d115-44f3-9553-4bcc1a4ecc05",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "ID": "e7ed3e73-d115-44f3-9553-4bcc1a4ecc05",
+          "Username": "auser1@qa.com"
+        }
+      },
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "1ee22405-59b8-49a9-b64b-5b13aee592ce",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "ID": "1ee22405-59b8-49a9-b64b-5b13aee592ce",
+          "Username": "admin@abc1234"
+        }
+      },
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "0ee88549-7c48-486d-a9f5-63cf9167890a",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "ID": "0ee88549-7c48-486d-a9f5-63cf9167890a",
+          "Username": "test2@ddog.com"
+        }
+      },
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "d9fed598-7f16-4305-aaa8-97a9f5c12c00",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "ID": "d9fed598-7f16-4305-aaa8-97a9f5c12c00",
+          "Username": "user1@ddog.com"
+        }
+      }
+    ],
+    "ReturnID": ""
+  },
+  "Message": null,
+  "MessageID": null,
+  "Exception": null,
+  "ErrorID": null,
+  "ErrorCode": null,
+  "InnerExceptions": null
+}

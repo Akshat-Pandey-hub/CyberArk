@@ -1,0 +1,58 @@
+{
+  "success": true,
+  "Result": {
+    "FullCount": 2,
+    "Results": [
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "********-****-****-****-************",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "DisplayName": "A P Manson",
+          "DirectoryServiceUuid": "********-****-****-****-************",
+          "LastInvite": "/Date(1436985457356)/",
+          "LastLogin": null,
+          "SourceDsLocalized": "Cloud",
+          "StatusEnum": "Invited",
+          "_MatchFilter": null,
+          "Email": "mdkline1@mac.com",
+          "Username": "apman@mdk",
+          "Forest": null,
+          "SourceDs": "CDS",
+          "Status": "Invited",
+          "ID": "********-****-****-****-************",
+          "SourceDsType": "CDS"
+        }
+      },
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "********-****-****-****-************",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "DisplayName": "cloudadmin",
+          "DirectoryServiceUuid": "********-****-****-****-************",
+          "LastInvite": null,
+          "LastLogin": "/Date(1435592142208)/",
+          "SourceDsLocalized": "Cloud",
+          "StatusEnum": "Active",
+          "_MatchFilter": null,
+          "Email": "my.user@mydomain.com",
+          "Username": "cloudadmin@mytenant",
+          "Forest": null,
+          "SourceDs": "CDS",
+          "Status": "Active",
+          "ID": "********-****-****-****-************",
+          "SourceDsType": "CDS"
+        }
+      }
+    ]
+  }
+}

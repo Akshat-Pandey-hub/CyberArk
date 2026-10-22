@@ -1,0 +1,16 @@
+{
+"success": false,
+"Result": null,
+"Message": "Query has failed: no such table: Users",
+"MessageID": "_I18N_RedrockQuery",
+"Exception": "Idaptive.Cloud.Query.RedrockQueryException: Query has failed: no such table: Users ---> System.Data.SQLite.SQLiteException: ...",
+"ErrorID": "5da234d1-0fd9-43b1-b121-04d5177112f3:e62a3498eff04b9999aea4ec72ddea52",
+"ErrorCode": null,
+"InnerExceptions": [
+{
+    "Detail": "System.Data.SQLite.SQLiteException (0x80004005): SQL logic error or missing database\r\nno such table: Users\r\n  ...",
+    "Message": "SQL logic error or missing database\r\nno such table: Users",
+    "MessageID": "_I18N_System.Data.SQLite.SQLiteException"
+}
+    ]
+}

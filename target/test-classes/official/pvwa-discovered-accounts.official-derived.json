@@ -1,0 +1,60 @@
+{
+"value": [
+{
+"id": "18_5",
+"name": "win8.example.com-administrator-e7626445-404b-4647-9b23-c4f08513a688",
+"userName": "administrator",
+"address": "win8.example.com",
+"accountEnabled": true,
+"osGroups": "Backup Operators,IIS_IUSRS,Network Configuration Operators",
+"platformType": "Windows Server Local",
+"domain": "example.com",
+"lastLogonDateTime": 1530635686,
+"lastPasswordSetDateTime": 1530635786,
+"passwordNeverExpires": false,
+"osVersion": "Windows Server 2012 R2 Standard",
+"privileged": false,
+"userDisplayName": "User Display Name",
+"description": "User Description",
+"passwordExpirationDateTime": 1530645686,
+"osFamily": "Server",
+"organizationalUnit": "CN=Users,DC=example,DC=com",
+"platformTypeAccountProperties": {
+"SID": "S-1-5-21-304654729-3147011263-1431158397-3154"
+},
+"additionalProperties": {
+"AccountType": "Local",
+"Port": 445,
+"UserDN": "CN=administrator,CN=Users,DC=example,DC=com",
+"CreationMethod": "WebService"
+},
+"numberOfDependencies": 2
+},
+{
+"id": "18_7",
+"name": "example.com-amazon_accesskey_user-e7626445-404b-4647-9b23-c4f08513a850",
+"userName": "amazon_accesskey_user",
+"address": "example.com",
+"discoveryDate": 1530635688,
+"platformType": "AWS Access Keys",
+"privileged": true,
+"platformTypeAccountProperties": {
+"awsAccessKeyID": "ASASASASSA",
+"awsAccountID": "123123123123"
+}
+},
+{
+"id": "18_8",
+"name": "example.com-amazon_dashboard_user-e7626445-404b-4647-9b23-c4f08513a855",
+"userName": "amazon_dashboard_user",
+"address": "example.com",
+"discoveryDate": 1530635655,
+"platformType": "AWS",
+"privileged": true,
+"platformTypeAccountProperties": {
+"awsAccountID": "123123123123"
+}
+}
+],
+"count": 3
+}

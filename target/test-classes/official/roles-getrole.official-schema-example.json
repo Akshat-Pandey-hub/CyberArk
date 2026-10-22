@@ -1,0 +1,14 @@
+{
+  "Result": {
+    "DirectoryServiceUuid": "string",
+    "Principals": [
+      "string"
+    ],
+    "RoleType": "string",
+    "Uuid": "string",
+    "ReadOnly": true,
+    "Description": "string",
+    "Name": "string"
+  },
+  "Error": {}
+}

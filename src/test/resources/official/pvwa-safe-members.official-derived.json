@@ -1,0 +1,40 @@
+{
+  "value": [
+    {
+      "safeUrlId": "BZ_I_87",
+      "safeName": "BZ_I_87",
+      "safeNumber": 37,
+      "memberId": 0,
+      "memberName": "Master",
+      "memberType": "User",
+      "membershipExpirationDate": null,
+      "isExpiredMembershipEnable": false,
+      "isPredefinedUser": true,
+      "permissions": {
+        "useAccounts": true,
+        "retrieveAccounts": true,
+        "listAccounts": true,
+        "addAccounts": true,
+        "updateAccountContent": true,
+        "updateAccountProperties": true,
+        "initiateCPMAccountManagementOperations": true,
+        "specifyNextAccountContent": true,
+        "renameAccounts": true,
+        "deleteAccounts": true,
+        "unlockAccounts": true,
+        "manageSafe": true,
+        "manageSafeMembers": true,
+        "backupSafe": true,
+        "viewAuditLog": true,
+        "viewSafeMembers": true,
+        "accessWithoutConfirmation": true,
+        "createFolders": true,
+        "deleteFolders": true,
+        "moveAccountsAndFolders": true,
+        "requestsAuthorizationLevel1": false,
+        "requestsAuthorizationLevel2": false
+      }
+    }
+  ],
+  "count": 1
+}

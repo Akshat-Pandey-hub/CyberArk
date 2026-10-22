@@ -1,0 +1,51 @@
+{
+"Users": [
+{
+"id": 2,
+"username": "Administrator",
+"source": "CyberArk",
+"userType": "Built-InAdmins",
+"componentUser": false,
+"groupsMembership": [
+{
+"groupID": 16,
+"groupName": "PVWAMonitor",
+"groupType": "Vault"
+},
+{
+"groupID": 17,
+"groupName": "PVWAUsers",
+"groupType": "Vault"
+},
+{
+"groupID": 11,
+"groupName": "Vault Admins",
+"groupType": "Vault"
+}
+],
+"vaultAuthorization": [
+"AddUpdateUsers",
+"AddSafes",
+"AddNetworkAreas",
+"ManageDirectoryMapping",
+"ManageServerFileCategories",
+"AuditUsers",
+"BackupAllSafes",
+"RestoreAllSafes",
+"ResetUsersPasswords",
+"ActivateUsers"
+],
+"allowedAuthenticationMethods": [
+"SAML",
+"PKI"
+],
+"location": "\\",
+"personalDetails": {
+"firstName": "Jen",
+"middleName": "R",
+"lastName": "Grey"
+}
+}
+],
+"Total": 1
+}

@@ -1,0 +1,21 @@
+{
+  "access_token": "***ACCESS TOKEN HERE***",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "scope": "full",
+  "EntityId": {
+    "type": "object",
+    "properties": {
+      "org_id": {
+        "type": "string"
+      },
+      "account_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "account_id"
+    ],
+    "description": "Cloud entity ID"
+  }
+}

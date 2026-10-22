@@ -1,0 +1,264 @@
+{
+  "info": {
+    "name": "CyberArk integration POC (mock)",
+    "description": "The six CyberArk calls used by the two use cases. Point {{identityBaseUrl}}, {{uapBaseUrl}} and {{tokenUrl}} at the local mock (FABRICATED data) or, later, at a real tenant. Field verification status: docs/API_CONTRACT.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Warn loudly when a response comes from the mock, so it is never mistaken for tenant data.",
+          "if (pm.response.headers.has('X-Mock-Data')) {",
+          "    console.log('MOCK RESPONSE (fabricated): ' + pm.info.requestName);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Login (platform token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has access_token', () => pm.expect(body.access_token).to.be.a('string').and.not.empty);",
+              "pm.collectionVariables.set('accessToken', body.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "client_credentials" },
+            { "key": "client_id", "value": "{{clientId}}" },
+            { "key": "client_secret", "value": "{{clientSecret}}" }
+          ]
+        },
+        "url": "{{tokenUrl}}",
+        "description": "Endpoint from third-party docs; access_token verified in the SDK; expires_in assumed."
+      }
+    },
+    {
+      "name": "1. Find approver roles (Redrock)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('success is true', () => pm.expect(body.success).to.eql(true));",
+              "const rows = body.Result.Results;",
+              "pm.test('at least one role', () => pm.expect(rows.length).to.be.above(0));",
+              "rows.forEach(r => pm.test('name matches pattern: ' + r.Row.Name,",
+              "    () => pm.expect(r.Row.Name).to.match(/^APP-CYA-ISPSS-SCA-AWS-.*-BUApprovers$/i)));",
+              "pm.collectionVariables.set('roleId', rows[0].Row.ID);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"Script\": \"SELECT ID, Name, Description FROM Role WHERE Name LIKE 'APP-CYA-ISPSS-SCA-AWS-%-BUApprovers'\"}"
+        },
+        "url": "{{identityBaseUrl}}/Redrock/query",
+        "description": "Endpoint and envelope verified in the SDK. Description column assumed."
+      }
+    },
+    {
+      "name": "2. Get role details (GetRole)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('success is true', () => pm.expect(body.success).to.eql(true));",
+              "pm.test('same role id (Uuid)', () => pm.expect(body.Result.Uuid).to.eql(pm.collectionVariables.get('roleId')));",
+              "pm.test('has a Principals list', () => pm.expect(body.Result.Principals).to.be.an('array'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": {
+          "raw": "{{identityBaseUrl}}/Roles/GetRole?Name={{roleId}}",
+          "host": ["{{identityBaseUrl}}"],
+          "path": ["Roles", "GetRole"],
+          "query": [{ "key": "Name", "value": "{{roleId}}" }]
+        },
+        "description": "Official Roles API reference: query parameter Name = role UUID; Result has Uuid, Name, Description, RoleType, Principals."
+      }
+    },
+    {
+      "name": "3. Get role members (GetRoleMembers)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('success is true', () => pm.expect(body.success).to.eql(true));",
+              "const rows = body.Result.Results;",
+              "rows.forEach(r => pm.test('member has Guid/Name/Type', () => pm.expect(r.Row).to.have.all.keys('Guid', 'Name', 'Type')));",
+              "const user = rows.find(r => String(r.Row.Type).toUpperCase() === 'USER');",
+              "pm.test('has a user member', () => pm.expect(user).to.exist);",
+              "pm.collectionVariables.set('userId', user.Row.Guid);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\"Name\": \"{{roleId}}\"}" },
+        "url": {
+          "raw": "{{identityBaseUrl}}/Roles/GetRoleMembers?name={{roleId}}",
+          "host": ["{{identityBaseUrl}}"],
+          "path": ["Roles", "GetRoleMembers"],
+          "query": [{ "key": "name", "value": "{{roleId}}" }]
+        },
+        "description": "Official reference: query parameter name = role UUID. The SDK sends {\"Name\": ...} in the body; both are sent. Row Guid/Name/Type verified in the SDK."
+      }
+    },
+    {
+      "name": "4. User lookup (Redrock User)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('success is true', () => pm.expect(body.success).to.eql(true));",
+              "const row = body.Result.Results[0].Row;",
+              "pm.test('same user id', () => pm.expect(row.ID).to.eql(pm.collectionVariables.get('userId')));",
+              "pm.test('has the Status column (documented, display only)', () => pm.expect(row).to.have.property('Status'));",
+              "pm.test('has the StatusEnum column (documented, used for eligibility)', () => pm.expect(row).to.have.property('StatusEnum'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"Script\": \"SELECT ID, Username, DisplayName, Email, LastLogin, Status, StatusEnum FROM User WHERE ID='{{userId}}'\"}"
+        },
+        "url": "{{identityBaseUrl}}/Redrock/query",
+        "description": "Columns per the official User data dictionary. StatusEnum (Created, Suspended, Invited, Active) decides eligibility; Status is its localized display text."
+      }
+    },
+    {
+      "name": "5. List policies (first page)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('results is an array', () => pm.expect(body.results).to.be.an('array'));",
+              "body.results.forEach(p => pm.test('policy has metadata.status.status: ' + p.metadata.name,",
+              "    () => pm.expect(p.metadata.status.status).to.be.a('string')));",
+              "const flagged = body.results.filter(p => ['error', 'warning'].includes(String(p.metadata.status.status).toLowerCase()));",
+              "console.log('Error/Warning on this page: ' + flagged.map(p => p.metadata.name).join(', '));",
+              "pm.collectionVariables.set('nextToken', body.nextToken || '');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": {
+          "raw": "{{uapBaseUrl}}/policies?limit=50",
+          "host": ["{{uapBaseUrl}}"],
+          "path": ["policies"],
+          "query": [{ "key": "limit", "value": "50" }]
+        },
+        "description": "Base URL from the official docs; path, paging and fields from the SDK."
+      }
+    },
+    {
+      "name": "6. List policies (next page)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('nextToken')) {",
+              "    console.log('No nextToken: the first page was the last one. Skipping.');",
+              "    pm.execution.skipRequest();",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('results is an array', () => pm.expect(pm.response.json().results).to.be.an('array'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "url": {
+          "raw": "{{uapBaseUrl}}/policies?limit=50&nextToken={{nextToken}}",
+          "host": ["{{uapBaseUrl}}"],
+          "path": ["policies"],
+          "query": [
+            { "key": "limit", "value": "50" },
+            { "key": "nextToken", "value": "{{nextToken}}" }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "accessToken", "value": "" },
+    { "key": "roleId", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "nextToken", "value": "" }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "results" : [ {
+    "metadata" : {
+      "policyId" : "5af2ccfe-98dd-42ad-aa5d-21ffdee1c2ed",
+      "name" : "My-Policy-All_DBs",
+      "description" : "Grants access to all database instances.",
+      "status" : {
+        "status" : "Active",
+        "statusCode" : "200",
+        "statusDescription" : "All good"
+      },
+      "policyEntitlement" : {
+        "targetCategory" : "DB",
+        "locationType" : "FQDN/IP",
+        "policyType" : "Recurring"
+      },
+      "createdBy" : {
+        "user" : "david@cyberark.cloud.27901",
+        "time" : "2025-04-03T15:54:29.317007"
+      },
+      "updatedBy" : {
+        "user" : "tina@cyberark.cloud.27901",
+        "time" : "2025-04-08T12:14:57.471631"
+      },
+      "policyTags" : [ "Databases", "E2E" ],
+      "timeZone" : "Asia/Jerusalem"
+    },
+    "principals" : [ {
+      "id" : "1",
+      "name" : "rkweak@cyberark.cloud.27901",
+      "sourceDirectoryName" : "Idira Cloud Directory",
+      "sourceDirectoryId" : "Idira Cloud Directory",
+      "type" : "USER"
+    } ],
+    "delegationClassification" : "Unrestricted"
+  } ],
+  "nextToken" : "DS1_10;DS2_20",
+  "total" : 42,
+  "failedServices" : [ ]
+}

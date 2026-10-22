@@ -1,0 +1,57 @@
+{
+  "success": true,
+  "Result": {
+    "Results": [
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "e7ed3e73-d115-44f3-9553-4bcc1a4ecc05",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "DisplayName": "QA1",
+          "DirectoryServiceUuid": "09B9A9B0-6CE8-465F-AB03-65766D33B05E",
+          "LastInvite": "/Date(1438715143250)/",
+          "LastLogin": "/Date(1438715156801)/",
+          "SourceDsLocalized": "Cloud",
+          "StatusEnum": "Active",
+          "_MatchFilter": null,
+          "Email": "john@acme.com",
+          "Username": "QA1@qa.com",
+          "Forest": null,
+          "SourceDs": "CDS",
+          "Status": "Active",
+          "ID": "e7ed3e73-d115-44f3-9553-4bcc1a4ecc05",
+          "SourceDsType": "CDS"
+        }
+      },
+      {
+        "Entities": [
+          {
+            "Type": "User",
+            "Key": "c5101b4a-34b1-4494-af72-dfcf1766e3b1",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "DisplayName": "ABC",
+          "DirectoryServiceUuid": "09B9A9B0-6CE8-465F-AB03-65766D33B05E",
+          "LastInvite": null,
+          "LastLogin": null,
+          "SourceDsLocalized": "Cloud",
+          "StatusEnum": "Created",
+          "_MatchFilter": null,
+          "Email": "shin@acme.com",
+          "Username": "abc@ldap4m",
+          "Forest": null,
+          "SourceDs": "CDS",
+          "Status": "Not Invited",
+          "ID": "c5101b4a-34b1-4494-af72-dfcf1766e3b1",
+          "SourceDsType": "CDS"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "PlatformID": "WinDesktopLocal",
+  "Properties": {
+    "PolicyID": "WinDesktopLocal",
+    "PolicyName": "Windows Desktop Local Accounts"
+  },
+  "Active": true
+}

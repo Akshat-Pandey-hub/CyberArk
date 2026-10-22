@@ -1,0 +1,40 @@
+# Official-example fixtures
+
+These files hold response bodies taken from CyberArk's **published documentation** and **public
+SwaggerHub mocks**. **None of them is a response from a real CyberArk tenant.** Placeholder values
+(`"string"`, masked ids such as `ccbf30c...` or `********-…`) are kept as published.
+
+Labels (also in each file name):
+
+- `official-derived`: an example from an official documentation page. The published text is not
+  valid JSON as printed, so it was minimally edited (edits listed below). The structure and values are
+  as published.
+- `official-schema-example`: the example value shown in an official OpenAPI reference (placeholder
+  values).
+- `public-mock`: the body returned by CyberArk's public SwaggerHub auto-mock, which serves the spec's
+  example. Placeholder/sample data.
+
+All sources were read on 2026-10-21/22.
+
+| File | Label | Source | Editorial changes |
+|---|---|---|---|
+| `redrock-user-query.official-derived.json` | official-derived | "Use queries", section *Response*, "The /Redrock/query User table response": https://docs.cyberark.com/developer/latest/en/developer/use-queries/ | Removed the bare `...` line between the 2nd and 3rd result; added the missing `},` between the 3rd and 4th result. No values changed |
+| `redrock-user-column-data.official-derived.json` | official-derived | Same page, section *Column data* (the "Results" fragment for "all columns in the User table") | The published text is a `"Results": [...]` fragment, so it was wrapped in the documented envelope `{"success": true, "Result": {"Results": …}}`; the trailing `...` was removed. Row values unchanged |
+| `redrock-failure.official-derived.json` | official-derived | Same page, "Example of an unsuccessful call to /Redrock/query" | None (already valid JSON; the `...` are inside string values) |
+| `redrock-role-table.official-derived.json` | official-derived | Data dictionary, Role, "Role table query response": https://docs.cyberark.com/developer/latest/en/developer/data-dictionary/role/ | Removed the bare `...` entries in `Columns` and `Results`. Masked ids kept as published strings |
+| `saasmanage-getrolemembers-flat.official-derived.json` | official-derived | Same page, "the response to the /SaasManage/GetRoleMembers request" | Removed the bare `...` entry in `Columns`. `"??"` values kept as published |
+| `redrock-user-dictionary.official-derived.json` | official-derived | Data dictionary, User, "User table query response": https://docs.cyberark.com/developer/latest/en/developer/data-dictionary/user/ | The published text starts with `...` and is a fragment (`"FullCount": 2, "Results": [...]`), so it was wrapped in `{"success": true, "Result": {…}}`. Row values unchanged (ids are masked in the source) |
+| `roles-getrole.official-schema-example.json` | official-schema-example | Roles API reference, `POST /Roles/GetRole`, 200 example value: https://api-docs.cyberark.com/identity-docs-api/docs/roles-api | None |
+| `roles-getrolemembers-nested.official-schema-example.json` | official-schema-example | Roles API reference, `POST /Roles/GetRoleMembers`, 200 example value. Body captured from the public SwaggerHub mock `https://virtserver.swaggerhub.com/CyberArk/roles-api/main/Roles/GetRoleMembers` (a server listed on that page), which serves the same example | None (saved byte for byte from the mock) |
+| `uap-policies-200.official-schema-example.json` | official-schema-example | Access Control Policies API, `GET /policies`, 200 example value: https://api-docs.cyberark.com/uap-schema-api/docs/access-control-policies-api | None. Note: `results` holds an **empty policy object**; it is used only to show that a policy without `metadata` is rejected, never as a successful policy fixture |
+| `uap-error.official-schema-example.json` | official-schema-example | Same reference, `GET /policies` 400/401/500 example value (`ErrorResponse`) | None |
+| `uap-policies.public-mock.json` | public-mock | `GET https://virtserver.swaggerhub.com/CyberArk/uap-schema-api/main/policies` (a server listed on the Access Control Policies page) | None (saved byte for byte) |
+| `sca-token.official-schema-example.json` | official-schema-example | SCA APIs reference, `POST /oauth2/token/{app_id}`, 200 example value: https://api-docs.cyberark.com/sca-api/docs/secure-cloud-access-apis | None. The example's `EntityId` holds a JSON-schema fragment, as published |
+| `pvwa-safe-members.official-derived.json` | official-derived | PAM Self-Hosted "Get all Safe members", 2nd gen, *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/sdk/safe%20members%20ws%20-%20list%20safe%20members.htm | Removed the elided `{ ... }` second member and the trailing comma; `count` changed from 8 to 1 to match the one member kept. Member values unchanged (`isReadOnly` is in the field table but not in the example, so it is absent here too). Used by `SafeMembersExtractionTest` |
+| `pvwa-target-platforms.official-example.json` | official-example | PAM Self-Hosted "Get target platforms", *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/sdk/rest-api-get-target-platforms.htm | None (complete, valid JSON as published). Note: the page's field table uses different, camelCase names (`general.id`, `credentialsManagement…performPeriodic`); this example's PascalCase names are what the columns follow. Used by `TargetPlatformsExtractionTest` |
+| `pvwa-platform-details.official-template-derived.json` | official-template-derived | PAM Self-Hosted "Get platform details", *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/webservices/getplatformdetails.htm | The page shows only a placeholder template (`"PlatformID":<Platform ID>`, `"Properties":<list of key\value>`, `"Active":<is active>`), not valid JSON. The three documented fields were kept; the placeholders were filled with the platform from the official target-platforms example and two fabricated Policy INI keys. Whether `Properties` is an object or an array is not documented. Used by `PlatformDetailsExtractionTest` |
+| `pvwa-users.official-example.json` | official-example | PAM Self-Hosted "Get users", *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/sdk/get-users-api.htm | None (complete, valid JSON as published). Note: the example has no `userDN`, `authorizedInterfaces`, `enabled` or `suspended` although the field table lists them, and its group ids are `groupID` while the field table says `groupId`. Used by `UsersExtractionTest` |
+| `pvwa-user-groups.official-derived.json` | official-derived | PAM Self-Hosted "Get groups", *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/webservices/getgroupsfromvault.htm | The published result is a schema example (values `"string"` / `0`) with `"count": 250` and `"nextLink": "string"` for one group. `count` was set to 1 and the placeholder `nextLink` removed so the single page is self-consistent. The group object is unchanged. Used by `UserGroupsExtractionTest` |
+| `pvwa-discovered-accounts.official-derived.json` | official-derived | PAM Self-Hosted "Get discovered accounts", *Result*: https://docs.cyberark.com/pam-self-hosted/latest/en/content/webservices/get-discovered-accounts.htm | The published example is not valid JSON (elided `...` records and an unquoted `nextLink`). Kept the three complete records (18_5, 18_7, 18_8) unchanged; removed the partial 18_6 and the `{ ... }` entry; `count` changed from 500 to 3 and `nextLink` removed. Note: records 18_7/18_8 use `discoveryDate`, while the field table says `discoveryDateTime`. Used by `DiscoveredAccountsExtractionTest` |
+
+Used by `src/test/java/com/keyforge/cyberarkpoc/client/OfficialExamplesContractTest.java`.

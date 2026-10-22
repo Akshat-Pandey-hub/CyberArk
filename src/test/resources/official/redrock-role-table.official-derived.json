@@ -1,0 +1,51 @@
+{
+  "success": true,
+  "Result": {
+    "IsAggregate": false,
+    "Count": 79,
+    "Columns": [
+      {
+        "Name": "Description",
+        "IsHidden": false,
+        "DDName": "Description",
+        "Title": "Description",
+        "DDTitle": "Description",
+        "Description": null,
+        "Type": 12,
+        "Format": null,
+        "Width": 0,
+        "TableKey": "NotAKey",
+        "ForeignKey": null,
+        "TableName": "Role"
+      }
+    ],
+    "FullCount": 79,
+    "Results": [
+      {
+        "Entities": [
+          {
+            "Type": "Role",
+            "Key": "ccbf30c...",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "Name": "admin portal",
+          "ID": "ccbf30c...",
+          "Description": null,
+          "_MatchFilter": null,
+          "RoleType": "PrincipalList",
+          "ReadOnly": false,
+          "DirectoryServiceUuid": "09B9A9B0..."
+        }
+      }
+    ],
+    "ReturnID": ""
+  },
+  "Message": null,
+  "MessageID": null,
+  "Exception": null,
+  "ErrorID": null,
+  "ErrorCode": null,
+  "InnerExceptions": null
+}

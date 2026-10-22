@@ -1,0 +1,47 @@
+{
+  "success": true,
+  "Result": {
+    "IsAggregate": false,
+    "Count": 1,
+    "Columns": [
+      {
+        "Name": "Name",
+        "IsHidden": false,
+        "DDName": null,
+        "Title": "Name",
+        "DDTitle": null,
+        "Description": null,
+        "Type": 12,
+        "Format": null,
+        "Width": 17,
+        "TableKey": null,
+        "ForeignKey": null,
+        "TableName": null
+      }
+    ],
+    "FullCount": 1,
+    "Results": [
+      {
+        "Entities": [
+          {
+            "Type": "??",
+            "Key": "??",
+            "IsForeignKey": false
+          }
+        ],
+        "Row": {
+          "Name": "test@mytenant.idaptive.com",
+          "Guid": "cee2bfa4...",
+          "Type": "User"
+        }
+      }
+    ],
+    "ReturnID": ""
+  },
+  "Message": null,
+  "MessageID": null,
+  "Exception": null,
+  "ErrorID": null,
+  "ErrorCode": null,
+  "InnerExceptions": null
+}

@@ -1,0 +1,51 @@
+{
+  "Result" : {
+    "ErrorID" : "string",
+    "ErrorCode" : "string",
+    "Exception" : "string",
+    "MessageID" : "string",
+    "Result" : {
+      "ReturnID" : "string",
+      "count" : 0,
+      "columns" : [ {
+        "TableKey" : "string",
+        "Description" : "string",
+        "Name" : "string",
+        "Format" : "string",
+        "TableName" : "string",
+        "DDTitle" : "string",
+        "Type" : 0,
+        "IsHidden" : true,
+        "DDname" : "string",
+        "Width" : 0,
+        "Title" : "string",
+        "ForeignKey" : "string"
+      } ],
+      "IsAggregrate" : "string",
+      "Results" : [ {
+        "Entities" : [ {
+          "IsForeignKey" : true,
+          "type" : "string",
+          "Key" : "string"
+        } ],
+        "Row" : [ {
+          "IsEffective" : true,
+          "OrgPath" : "string",
+          "OrgId" : "string",
+          "Guid" : "string",
+          "Type" : "string",
+          "Name" : "string"
+        } ]
+      } ],
+      "FullCount" : 0
+    },
+    "InnerExceptions" : "string",
+    "Message" : "string",
+    "success" : true,
+    "IsSoftError" : true
+  },
+  "Error" : {
+    "Invalid_Role" : "string",
+    "Invalid_Data" : "string"
+  }
+}

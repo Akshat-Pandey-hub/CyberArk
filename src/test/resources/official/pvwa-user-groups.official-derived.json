@@ -1,0 +1,20 @@
+{
+"value": [
+{
+"id": 0,
+"groupType": "Vault",
+"directory": "string",
+"dn": "string",
+"members": [
+{
+"username": "string",
+"id": 0
+}
+],
+"groupName": "string",
+"description": "string",
+"location": "string"
+}
+],
+"count": 1
+}
