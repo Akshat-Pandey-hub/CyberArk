@@ -122,18 +122,52 @@ public final class ExtractionRestServer {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * A route that needs no PVWA session (e.g. the Identity approver check, which has its own login). {@code run}
+     * returns the whole response, including {@code status}.
+     */
+    public record StandaloneRoute(String description, Supplier<Map<String, Object>> run) {
+    }
+
     private final Settings settings;
     private final Supplier<PvwaClient> pvwa;
     private final Map<String, Route> routes;
+    private final Map<String, StandaloneRoute> standalone;
     private final AtomicBoolean busy = new AtomicBoolean();
     private HttpServer server;
     private ExecutorService executor;
 
     /** {@code pvwa} creates a new client (and so a new session) per run; config errors surface per request. */
     public ExtractionRestServer(Settings settings, Supplier<PvwaClient> pvwa, Map<String, Route> routes) {
+        this(settings, pvwa, routes, Map.of());
+    }
+
+    public ExtractionRestServer(Settings settings, Supplier<PvwaClient> pvwa, Map<String, Route> routes,
+                                Map<String, StandaloneRoute> standalone) {
         this.settings = settings;
         this.pvwa = pvwa;
         this.routes = routes;
+        this.standalone = standalone;
+    }
+
+    /** Runs a standalone route; a configuration or unexpected error still gives a JSON answer. */
+    public static Map<String, Object> run(String name, StandaloneRoute route) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("route", name);
+        body.put("started_at", Instant.now().toString());
+        try {
+            body.putAll(route.run().get());
+        } catch (ConfigException e) {
+            body.put("status", "CONFIG_ERROR");
+            body.put("error", ErrorSanitizer.clean(e.getMessage()));
+        } catch (RuntimeException e) {
+            body.put("status", "FAILED");
+            body.put("error_kind", "INTERNAL");
+            body.put("error", ErrorSanitizer.clean("unexpected error: " + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage())));
+        }
+        body.put("ended_at", Instant.now().toString());
+        return body;
     }
 
     public void start() throws IOException {
@@ -174,13 +208,15 @@ public final class ExtractionRestServer {
                 body.put("usage", "GET " + BASE_PATH + "/<route>");
                 Map<String, String> list = new LinkedHashMap<>();
                 routes.forEach((k, v) -> list.put(k, v.description()));
+                standalone.forEach((k, v) -> list.put(k, v.description()));
                 body.put("routes", list);
                 send(ex, 200, body);
                 return;
             }
             String name = path.startsWith(BASE_PATH + "/") ? path.substring(BASE_PATH.length() + 1) : "";
             Route route = routes.get(name);
-            if (route == null) {
+            StandaloneRoute other = standalone.get(name);
+            if (route == null && other == null) {
                 send(ex, 404, error("unknown route " + path + "; see GET " + BASE_PATH + " for the routes"));
                 return;
             }
@@ -190,7 +226,7 @@ public final class ExtractionRestServer {
             }
             Map<String, Object> result;
             try {
-                result = execute(name, route);
+                result = route != null ? execute(name, route) : run(name, other);
             } finally {
                 busy.set(false);
             }

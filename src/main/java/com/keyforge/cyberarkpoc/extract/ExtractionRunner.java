@@ -4,20 +4,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.keyforge.cyberarkpoc.client.CyberArkApiException;
 import com.keyforge.cyberarkpoc.client.PvwaClient;
 import com.keyforge.cyberarkpoc.store.DbConfig;
-import com.keyforge.cyberarkpoc.store.RawRecordRepository;
+import com.keyforge.cyberarkpoc.store.GenericRecordStore;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
 
 /**
- * Runs one extraction end to end: open the database, create the table if absent, fetch every page, and store each
- * record with every documented field in its own column (insert, or update the row with the same CyberArk id).
+ * Runs one extraction end to end: open the database, create the table if absent, fetch every page, make the table
+ * hold every field of the records received ({@link GenericRecordStore#prepare}), and store each record under its
+ * exact field names (insert, or update the row with the same CyberArk id).
  *
  * <p>Status: SUCCESS; INCOMPLETE when the fetch could not prove completeness; COMPLETED_WITH_FAILURES when records
  * failed to store or had no id; FAILED when the CyberArk call, the database or the code itself failed. The database
@@ -30,12 +27,11 @@ public final class ExtractionRunner {
     }
 
     public static Map<String, Object> run(PvwaExtraction extraction, PvwaClient client, DbConfig db) {
-        RawRecordRepository repo = new RawRecordRepository(db.schema(), extraction.table(), extraction.columns(),
-                extraction.keyFields());
+        GenericRecordStore store = new GenericRecordStore(db.schema(), extraction.table(), extraction.keyFields());
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("command", extraction.command());
-        body.put("table", repo.table());
+        body.put("table", store.table());
 
         Connection conn;
         try {
@@ -46,32 +42,36 @@ public final class ExtractionRunner {
         }
 
         try (conn) {
-            repo.ensureTable(conn);
+            store.ensureTable(conn);
+            FetchResult fetched;
             try {
-                FetchResult fetched = extraction.fetch().apply(client);
-                Stored stored = store(repo, conn, fetched, extraction, client);
-
-                String status = !fetched.complete() ? "INCOMPLETE"
-                        : stored.failed > 0 || fetched.missingId() > 0 ? "COMPLETED_WITH_FAILURES" : "SUCCESS";
-                body.put("status", status);
-                body.put("extracted", fetched.records().size());
-                body.put("inserted", stored.inserted);
-                body.put("updated", stored.updated);
-                body.put("failed", stored.failed + fetched.missingId());
-                body.put("pages", fetched.pages());
-                body.put("reported_total", fetched.reportedTotal());
-                body.put("complete", fetched.complete());
-                body.put("notes", fetched.notes().stream().map(client::sanitize).toList());
-                body.put("fields_without_column", fieldsWithoutColumn(fetched, extraction));
-                if (stored.firstError != null) {
-                    body.put("error", stored.firstError);
-                }
-                body.put("records", fetched.records());
+                fetched = extraction.fetch().apply(client);
             } catch (CyberArkApiException e) {
                 fail(body, e.kind().name(), e.httpStatus(), client.sanitize(e.getMessage()));
+                return body;
             } catch (RuntimeException e) {
                 fail(body, "INTERNAL", null, client.sanitize("unexpected error: " + describe(e)));
+                return body;
             }
+            GenericRecordStore.Prepared prepared = store.prepare(conn, fetched.records());
+            Stored stored = store(store, prepared, conn, fetched, extraction, client);
+
+            String status = !fetched.complete() ? "INCOMPLETE"
+                    : stored.failed > 0 || fetched.missingId() > 0 ? "COMPLETED_WITH_FAILURES" : "SUCCESS";
+            body.put("status", status);
+            body.put("extracted", fetched.records().size());
+            body.put("inserted", stored.inserted);
+            body.put("updated", stored.updated);
+            body.put("failed", stored.failed + fetched.missingId());
+            body.put("pages", fetched.pages());
+            body.put("reported_total", fetched.reportedTotal());
+            body.put("complete", fetched.complete());
+            body.put("notes", fetched.notes().stream().map(client::sanitize).toList());
+            body.put("schema_changes", prepared.changes());
+            if (stored.firstError != null) {
+                body.put("error", stored.firstError);
+            }
+            body.put("records", fetched.records());
             return body;
         } catch (SQLException e) {
             String message = client.sanitize(e.getMessage());
@@ -87,8 +87,8 @@ public final class ExtractionRunner {
     private record Stored(int inserted, int updated, int failed, String firstError) {
     }
 
-    private static Stored store(RawRecordRepository repo, Connection conn, FetchResult fetched,
-                                PvwaExtraction extraction, PvwaClient client) {
+    private static Stored store(GenericRecordStore store, GenericRecordStore.Prepared prepared, Connection conn,
+                                FetchResult fetched, PvwaExtraction extraction, PvwaClient client) {
         int inserted = 0;
         int updated = 0;
         int failed = 0;
@@ -97,7 +97,7 @@ public final class ExtractionRunner {
             String id = String.join("/", extraction.keyFields().stream()
                     .map(k -> record.path(k).asText()).toList());
             try {
-                if (repo.upsert(conn, record) == RawRecordRepository.Outcome.INSERTED) {
+                if (store.upsert(conn, prepared, record) == GenericRecordStore.Outcome.INSERTED) {
                     inserted++;
                 } else {
                     updated++;
@@ -110,24 +110,6 @@ public final class ExtractionRunner {
             }
         }
         return new Stored(inserted, updated, failed, firstError);
-    }
-
-    /**
-     * Response fields that are not in the documented column list (e.g. added by a newer PVWA version). They are
-     * listed in the response so nothing is dropped unnoticed; they are not stored.
-     */
-    static List<String> fieldsWithoutColumn(FetchResult fetched, PvwaExtraction extraction) {
-        Set<String> known = new HashSet<>();
-        extraction.columns().forEach(c -> known.add(c.name()));
-        Set<String> extra = new TreeSet<>();
-        for (JsonNode record : fetched.records()) {
-            record.fieldNames().forEachRemaining(name -> {
-                if (!known.contains(name)) {
-                    extra.add(name);
-                }
-            });
-        }
-        return List.copyOf(extra);
     }
 
     private static void fail(Map<String, Object> body, String kind, Integer httpStatus, String error) {

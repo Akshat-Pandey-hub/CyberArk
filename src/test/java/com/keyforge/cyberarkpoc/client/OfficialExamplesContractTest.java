@@ -88,7 +88,7 @@ class OfficialExamplesContractTest {
     @Test
     void flatMembersFromOfficialSaasManageExample() {
         List<RoleMember> members = IdentityResponses.roleMembers("test",
-                json("saasmanage-getrolemembers-flat.official-derived.json"));
+                json("saasmanage-getrolemembers-flat.official-derived.json")).members();
 
         assertEquals(1, members.size());
         assertEquals("cee2bfa4...", members.get(0).id());
@@ -98,12 +98,15 @@ class OfficialExamplesContractTest {
     }
 
     @Test
-    void nestedMembersSchemaExampleIsRejectedNotReadAsEmpty() {
-        CyberArkApiException e = assertThrows(CyberArkApiException.class, () -> IdentityResponses.roleMembers("test",
-                json("roles-getrolemembers-nested.official-schema-example.json")));
+    void nestedMembersSchemaExampleIsReadInItsDocumentedShape() {
+        IdentityResponses.MemberList list = IdentityResponses.roleMembers("test",
+                json("roles-getrolemembers-nested.official-schema-example.json"));
 
-        assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, e.kind());
-        assertTrue(e.getMessage().contains("success"), e.getMessage());
+        assertEquals("nested", list.shape());
+        assertEquals(1, list.members().size(), "one member in the example's Row array");
+        assertEquals("string", list.members().get(0).id(), "the schema example's placeholder Guid");
+        assertEquals(0, list.reportedTotal(), "the example's FullCount placeholder");
+        assertTrue(list.softError(), "the example sets IsSoftError true; the check treats that as incomplete");
     }
 
     @Test

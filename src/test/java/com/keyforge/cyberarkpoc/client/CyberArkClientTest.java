@@ -29,7 +29,7 @@ class CyberArkClientTest {
     @Test
     void roleSearchUsesTheLikePattern() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            List<String> names = f.client.findRolesByNamePattern(PATTERN).stream().map(Role::name).toList();
+            List<String> names = f.client.findRolesByNamePattern(PATTERN, 1000, 10).roles().stream().map(Role::name).toList();
 
             assertEquals(5, names.size());
             assertTrue(names.contains("APP-CYA-ISPSS-SCA-AWS-Finance-BUApprovers"));
@@ -42,7 +42,7 @@ class CyberArkClientTest {
     void quotesInTheSearchValueAreEscaped() {
         MockDataset data = new MockDataset().role("r1", "O'Brien-Approvers", "quote");
         try (MockFixture f = MockFixture.start(data)) {
-            assertEquals(1, f.client.findRolesByNamePattern("O'Brien-%").size());
+            assertEquals(1, f.client.findRolesByNamePattern("O'Brien-%", 1000, 10).roles().size());
         }
     }
 
@@ -52,7 +52,7 @@ class CyberArkClientTest {
             assertEquals("APP-CYA-ISPSS-SCA-AWS-Marketing-BUApprovers", f.client.getRole("role-mkt").name());
             assertEquals(3, f.client.getRole("role-mkt").principals().size());
 
-            List<RoleMember> members = f.client.getRoleMembers("role-mkt");
+            List<RoleMember> members = f.client.getRoleMembers("role-mkt").members();
             assertEquals(3, members.size());
             assertEquals(RoleMember.Type.GROUP, members.get(2).type());
         }
@@ -87,7 +87,7 @@ class CyberArkClientTest {
     @Test
     void tokenIsRequestedOnceAndReused() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.client.findRolesByNamePattern(PATTERN);
+            f.client.findRolesByNamePattern(PATTERN, 1000, 10);
             f.client.listPolicies();
 
             assertEquals(1, f.mock.requestCount(MockCyberArkServer.TOKEN));
@@ -144,7 +144,7 @@ class CyberArkClientTest {
     void successFalseAndMalformedJsonAreReported() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
             f.mock.fail(MockCyberArkServer.REDROCK_ROLE, Fault.SUCCESS_FALSE);
-            assertEquals(CyberArkApiException.Kind.API_FAILURE, failureKind(() -> f.client.findRolesByNamePattern(PATTERN)));
+            assertEquals(CyberArkApiException.Kind.API_FAILURE, failureKind(() -> f.client.findRolesByNamePattern(PATTERN, 1000, 10)));
 
             f.mock.fail(MockCyberArkServer.REDROCK_USER, Fault.MALFORMED_JSON);
             assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, failureKind(() -> f.client.findUserById("fin.approver1")));

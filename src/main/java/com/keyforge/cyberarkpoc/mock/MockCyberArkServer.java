@@ -57,6 +57,7 @@ public final class MockCyberArkServer implements AutoCloseable {
     public static final String TOKEN = "token";
     public static final String REDROCK_ROLE = "redrock-role";
     public static final String REDROCK_USER = "redrock-user";
+    public static final String REDROCK_ROLE_BY_ID = "redrock-role-by-id";
     public static final String GET_ROLE = "get-role";
     public static final String GET_ROLE_MEMBERS = "get-role-members";
     public static final String POLICIES = "policies";
@@ -95,6 +96,25 @@ public final class MockCyberArkServer implements AutoCloseable {
 
     private static final Pattern ROLE_QUERY =
             Pattern.compile("(?is)\\bFROM\\s+Role\\s+WHERE\\s+Name\\s+LIKE\\s+'((?:[^']|'')*)'");
+    private static final Pattern ROLE_BY_ID_QUERY =
+            Pattern.compile("(?is)\\bFROM\\s+Role\\s+WHERE\\s+ID\\s*=\\s*'((?:[^']|'')*)'");
+
+    /** The two documented role-members response shapes (docs/API_CONTRACT.md §6). */
+    public enum MemberShape { FLAT, NESTED }
+
+    private volatile MemberShape memberShape = MemberShape.FLAT;
+
+    /** Test-only: which documented shape GetRoleMembers answers with. */
+    public void memberShape(MemberShape shape) {
+        this.memberShape = shape;
+    }
+
+    /** The raw Redrock request bodies received (Script and args), so tests can check the paging sent. */
+    private final List<String> redrockBodies = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public List<String> redrockBodies() {
+        return redrockBodies;
+    }
     private static final Pattern USER_QUERY =
             Pattern.compile("(?is)\\bFROM\\s+User\\s+WHERE\\s+ID\\s*=\\s*'((?:[^']|'')*)'");
 
@@ -181,6 +201,7 @@ public final class MockCyberArkServer implements AutoCloseable {
                 case "/api/Redrock/query" -> requirePost(exchange, method, this::redrock);
                 case "/api/Roles/GetRole" -> requirePost(exchange, method, this::getRole);
                 case "/api/Roles/GetRoleMembers" -> requirePost(exchange, method, this::getRoleMembers);
+                case "/api/SaasManage/GetRoleMembers" -> requirePost(exchange, method, this::getRoleMembers);
                 case "/api/policies" -> {
                     if (method.equals("GET")) {
                         policies(exchange);
@@ -534,11 +555,19 @@ public final class MockCyberArkServer implements AutoCloseable {
     // ---- identity ------------------------------------------------------------------------
 
     private void redrock(HttpExchange exchange) throws IOException {
-        String script = mapper.readTree(readBody(exchange)).path("Script").asText("");
+        String raw = readBody(exchange);
+        redrockBodies.add(raw);
+        var request = mapper.readTree(raw);
+        String script = request.path("Script").asText("");
+        var args = request.has("args") ? request.get("args") : request.path("Args");
         Matcher role = ROLE_QUERY.matcher(script);
+        Matcher roleById = ROLE_BY_ID_QUERY.matcher(script);
         Matcher user = USER_QUERY.matcher(script);
         if (role.find()) {
-            redrockRoles(exchange, unquote(role.group(1)));
+            redrockRoles(exchange, unquote(role.group(1)), args.path("PageNumber").asInt(0),
+                    args.path("PageSize").asInt(0));
+        } else if (roleById.find()) {
+            redrockRoleById(exchange, unquote(roleById.group(1)));
         } else if (user.find()) {
             redrockUser(exchange, unquote(user.group(1)));
         } else {
@@ -549,23 +578,63 @@ public final class MockCyberArkServer implements AutoCloseable {
         }
     }
 
-    private void redrockRoles(HttpExchange exchange, String likePattern) throws IOException {
+    /**
+     * Role search with the documented paging arguments: 1-based {@code PageNumber} and {@code PageSize} (no args =
+     * everything), {@code Count} = rows on this page, {@code FullCount} = all matching roles. Faults: WRONG_COUNT
+     * reports a FullCount one higher; IGNORE_OFFSET always serves the first page.
+     */
+    private void redrockRoles(HttpExchange exchange, String likePattern, int pageNumber, int pageSize)
+            throws IOException {
         count(REDROCK_ROLE);
-        if (!authorized(exchange) || applyFault(exchange, REDROCK_ROLE)) {
+        Fault fault = faults.get(REDROCK_ROLE);
+        if (!authorized(exchange)
+                || (fault != Fault.WRONG_COUNT && fault != Fault.IGNORE_OFFSET && applyFault(exchange, REDROCK_ROLE))) {
             return;
         }
         Pattern regex = likeToRegex(likePattern);
-        ArrayNode results = mapper.createArrayNode();
+        List<ObjectNode> matching = new java.util.ArrayList<>();
         for (MockDataset.RoleRow row : data.roles.values()) {
             if (regex.matcher(row.name()).matches()) {
-                ObjectNode r = mapper.createObjectNode();
-                r.put("ID", row.id());
-                r.put("Name", row.name());
-                r.put("Description", row.description());
-                results.addObject().set("Row", r);
+                matching.add(roleRow(row));
             }
         }
+        matching.sort(java.util.Comparator.comparing(n -> n.get("ID").asText()));
+        int from = 0;
+        int to = matching.size();
+        if (pageSize > 0) {
+            int page = fault == Fault.IGNORE_OFFSET ? 1 : Math.max(pageNumber, 1);
+            from = Math.min((page - 1) * pageSize, matching.size());
+            to = Math.min(from + pageSize, matching.size());
+        }
+        ArrayNode results = mapper.createArrayNode();
+        matching.subList(from, to).forEach(r -> results.addObject().set("Row", r));
+        ObjectNode body = success(results);
+        ((ObjectNode) body.get("Result")).put("FullCount", matching.size() + (fault == Fault.WRONG_COUNT ? 1 : 0));
+        send(exchange, 200, body);
+    }
+
+    private void redrockRoleById(HttpExchange exchange, String roleId) throws IOException {
+        count(REDROCK_ROLE_BY_ID);
+        if (!authorized(exchange) || applyFault(exchange, REDROCK_ROLE_BY_ID)) {
+            return;
+        }
+        ArrayNode results = mapper.createArrayNode();
+        MockDataset.RoleRow row = data.roles.get(roleId);
+        if (row != null && !data.hiddenRoles.contains(roleId)) {
+            results.addObject().set("Row", roleRow(row));
+        }
         send(exchange, 200, success(results));
+    }
+
+    /** A Role table row with the documented columns. */
+    private ObjectNode roleRow(MockDataset.RoleRow row) {
+        ObjectNode r = mapper.createObjectNode();
+        r.put("ID", row.id());
+        r.put("Name", row.name());
+        r.put("RoleType", data.roleTypes.getOrDefault(row.id(), "PrincipalList"));
+        r.put("ReadOnly", false);
+        r.put("Description", row.description());
+        return r;
     }
 
     private void redrockUser(HttpExchange exchange, String userId) throws IOException {
@@ -615,13 +684,20 @@ public final class MockCyberArkServer implements AutoCloseable {
         send(exchange, 200, body);
     }
 
+    /**
+     * Role members in the selected documented shape ({@link #memberShape}): FLAT = the Redrock envelope with one
+     * {@code Row} object per member; NESTED = the Roles API reference example, {@code success} inside {@code Result}
+     * and one {@code Row} array. Both report {@code FullCount}; fault WRONG_COUNT reports one more than listed.
+     */
     private void getRoleMembers(HttpExchange exchange) throws IOException {
         count(GET_ROLE_MEMBERS);
-        if (!authorized(exchange) || applyFault(exchange, GET_ROLE_MEMBERS)) {
+        Fault fault = faults.get(GET_ROLE_MEMBERS);
+        if (!authorized(exchange) || (fault != Fault.WRONG_COUNT && applyFault(exchange, GET_ROLE_MEMBERS))) {
             return;
         }
-        // The official reference uses the 'name' query parameter; the SDK uses {"Name": ..} in the body.
-        String roleId = parseForm(exchange.getRequestURI().getRawQuery()).get("name");
+        // Roles API reference: 'name' query parameter; SDK: {"Name": ..} body; data dictionary (SaasManage): 'Name'.
+        Map<String, String> query = parseForm(exchange.getRequestURI().getRawQuery());
+        String roleId = query.getOrDefault("name", query.get("Name"));
         String body = readBody(exchange);
         if (roleId == null && !body.isBlank()) {
             roleId = mapper.readTree(body).path("Name").asText(null);
@@ -629,6 +705,29 @@ public final class MockCyberArkServer implements AutoCloseable {
         List<MockDataset.MemberRow> members = roleId == null ? null : data.members.get(roleId);
         if (members == null) {
             send(exchange, 200, failure("MOCK: role not found"));
+            return;
+        }
+        int fullCount = members.size() + (fault == Fault.WRONG_COUNT ? 1 : 0);
+        if (memberShape == MemberShape.NESTED) {
+            ObjectNode root = labelled();
+            ObjectNode outer = root.putObject("Result");
+            ObjectNode inner = outer.putObject("Result");
+            ArrayNode rows = inner.putArray("Results").addObject().putArray("Row");
+            for (MockDataset.MemberRow member : members) {
+                ObjectNode r = rows.addObject();
+                r.put("IsEffective", true);
+                r.put("OrgPath", "");
+                r.put("OrgId", "");
+                r.put("Guid", member.guid());
+                r.put("Type", member.type());
+                r.put("Name", member.name());
+            }
+            inner.put("count", members.size());
+            inner.put("FullCount", fullCount);
+            outer.put("success", true);
+            outer.put("IsSoftError", false);
+            outer.putNull("Message");
+            send(exchange, 200, root);
             return;
         }
         ArrayNode results = mapper.createArrayNode();
@@ -639,7 +738,9 @@ public final class MockCyberArkServer implements AutoCloseable {
             r.put("Type", member.type());
             results.addObject().set("Row", r);
         }
-        send(exchange, 200, success(results));
+        ObjectNode flat = success(results);
+        ((ObjectNode) flat.get("Result")).put("FullCount", fullCount);
+        send(exchange, 200, flat);
     }
 
     // ---- policies ------------------------------------------------------------------------

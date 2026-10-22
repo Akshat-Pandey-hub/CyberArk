@@ -1,6 +1,7 @@
 package com.keyforge.cyberarkpoc;
 
 import com.keyforge.cyberarkpoc.check.ApproverGroupCheck;
+import com.keyforge.cyberarkpoc.check.ApproverGroupRun;
 import com.keyforge.cyberarkpoc.check.PolicyHealthCheck;
 import com.keyforge.cyberarkpoc.check.ReportPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +55,7 @@ public final class Main {
             case "pvwa-users" -> System.exit(runPvwaRoute("pvwa/users", false));
             case "pvwa-user-groups" -> System.exit(runPvwaRoute("pvwa/user-groups", false));
             case "pvwa-discovered-accounts" -> System.exit(runPvwaRoute("pvwa/discovered-accounts", false));
+            case ApproverGroupRun.COMMAND -> System.exit(runApproverGroups());
             case "start-rest" -> runRest();
             default -> {
                 usage();
@@ -98,7 +100,7 @@ public final class Main {
             return 2;
         }
         System.out.println("Using " + config);
-        CyberArkClient client = new CyberArkClient(config);
+        CyberArkClient client = new CyberArkClient(config, CyberArkConfig.roleMembersApi(System.getenv()));
         try {
             ReportPrinter.print(new ApproverGroupCheck(client).run(), System.out);
             System.out.println();
@@ -148,6 +150,42 @@ public final class Main {
         };
     }
 
+    static final String APPROVER_GROUPS_ROUTE = "ispss/approver-groups";
+
+    /**
+     * Use case 1 with its own Identity login (separate from PVWA). The CyberArk, database and check settings are read
+     * for every run, so a configuration error is reported in that run's JSON.
+     */
+    static ExtractionRestServer.StandaloneRoute approverGroupsRoute() {
+        return new ExtractionRestServer.StandaloneRoute(
+                "Use case 1: approver roles " + ApproverGroupCheck.DEFAULT_PATTERN + " need 3 direct members and 3 "
+                        + "verified active users (Identity Redrock + Roles APIs) -> ispss_* tables",
+                () -> {
+                    Map<String, String> env = System.getenv();
+                    CyberArkClient client = new CyberArkClient(CyberArkConfig.fromEnvironment(env),
+                            CyberArkConfig.roleMembersApi(env));
+                    return ApproverGroupRun.run(client, DbConfig.fromEnvironment(env),
+                            ApproverGroupRun.Settings.fromEnvironment(env));
+                });
+    }
+
+    /** CLI for use case 1; exit codes as for the extractions. The result is printed as JSON. */
+    private static int runApproverGroups() {
+        Map<String, Object> result = ExtractionRestServer.run(APPROVER_GROUPS_ROUTE, approverGroupsRoute());
+        try {
+            System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (IOException e) {
+            System.out.println(result);
+        }
+        return switch (String.valueOf(result.get("status"))) {
+            case "SUCCESS" -> 0;
+            case "COMPLETED_WITH_FAILURES" -> 6;
+            case "INCOMPLETE" -> 7;
+            case "CONFIG_ERROR" -> 2;
+            default -> 1;
+        };
+    }
+
     private static void runRest() throws IOException, InterruptedException {
         ExtractionRestServer.Settings settings;
         try {
@@ -169,13 +207,17 @@ public final class Main {
         }
         Map<String, ExtractionRestServer.Route> routes =
                 ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), extraction);
+        Map<String, ExtractionRestServer.StandaloneRoute> standalone = Map.of(APPROVER_GROUPS_ROUTE,
+                approverGroupsRoute());
         ExtractionRestServer rest = new ExtractionRestServer(settings,
-                () -> new PvwaClient(PvwaConfig.fromEnvironment(System.getenv())), routes);
+                () -> new PvwaClient(PvwaConfig.fromEnvironment(System.getenv())), routes, standalone);
         rest.start();
         System.out.println("[rest] listening on http://" + settings.host() + ":" + rest.port()
                 + ExtractionRestServer.BASE_PATH + "/<route>  (HTTP Basic Auth with REST_USERNAME / REST_PASSWORD; "
                 + "one run at a time; Ctrl+C to stop)");
         routes.forEach((k, v) -> System.out.println("  GET "
+                + ExtractionRestServer.BASE_PATH + "/" + k + "  - " + v.description()));
+        standalone.forEach((k, v) -> System.out.println("  GET "
                 + ExtractionRestServer.BASE_PATH + "/" + k + "  - " + v.description()));
         CountDownLatch stop = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -208,6 +250,8 @@ public final class Main {
                 + "(needs Audit users) into PostgreSQL");
         System.err.println("  java -jar cyberark-poc.jar pvwa-discovered-accounts extract the pending discovered "
                 + "accounts (needs Vault Admins or PVWAAccountsFeedAdmins) into PostgreSQL");
+        System.err.println("  java -jar cyberark-poc.jar " + ApproverGroupRun.COMMAND + " use case 1: approver roles "
+                + "(CYBERARK_IDENTITY_BASE_URL, CYBERARK_CLIENT_ID/SECRET + PG_* env vars)");
         System.err.println("  java -jar cyberark-poc.jar start-rest   start the extraction REST service "
                 + "(REST_* + CYBERARK_PVWA_* + PG_* env vars)");
     }

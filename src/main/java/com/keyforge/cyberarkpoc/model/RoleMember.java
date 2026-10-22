@@ -1,14 +1,22 @@
 package com.keyforge.cyberarkpoc.model;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.Locale;
 
-/** A GetRoleMembers row ({@code Guid}, {@code Name}, {@code Type}; verified in the SDK). */
-public record RoleMember(String id, String name, Type type, String rawType) {
+/**
+ * One role member row ({@code Guid}, {@code Name}, {@code Type}; in the nested Roles API shape also
+ * {@code IsEffective}, {@code OrgPath}, {@code OrgId}). {@code raw} is the row exactly as returned, kept for storage.
+ */
+public record RoleMember(String id, String name, Type type, String rawType, JsonNode raw) {
 
     public enum Type {
         USER, GROUP, ROLE, UNKNOWN;
 
-        /** The SDK upper-cases the wire value, so the wire casing is unknown; match case-insensitively. */
+        /**
+         * {@code User} is documented; {@code Group} and {@code Role} come from the official SDK, which upper-cases the
+         * wire value, so the wire casing is unknown: match case-insensitively.
+         */
         public static Type fromWire(String value) {
             if (value == null) {
                 return UNKNOWN;

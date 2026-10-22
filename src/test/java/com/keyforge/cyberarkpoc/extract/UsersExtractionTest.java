@@ -9,7 +9,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.store.Column;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -87,8 +86,6 @@ class UsersExtractionTest {
         assertEquals(10, u.get("vaultAuthorization").size());
         assertEquals("\\", u.get("location").asText());
         assertEquals("Grey", u.at("/personalDetails/lastName").asText());
-        List<String> columns = PvwaExtraction.USER_COLUMNS.stream().map(Column::name).toList();
-        u.fieldNames().forEachRemaining(f -> assertTrue(columns.contains(f), f + " has no column"));
     }
 
     @Test
@@ -175,6 +172,6 @@ class UsersExtractionTest {
         FetchResult result = users.fetch().apply(mockClient(data));
 
         assertFalse(result.records().toString().contains("MOCK-USER-PASSWORD"));
-        assertEquals(List.of("mockExtraField"), ExtractionRunner.fieldsWithoutColumn(result, users));
+        assertTrue(result.records().get(0).has("mockExtraField"), "an unexpected field is kept, not dropped");
     }
 }

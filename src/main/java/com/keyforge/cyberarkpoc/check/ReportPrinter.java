@@ -1,12 +1,11 @@
 package com.keyforge.cyberarkpoc.check;
 
 import com.keyforge.cyberarkpoc.check.ApproverGroupCheck.ApproverGroupReport;
-import com.keyforge.cyberarkpoc.check.ApproverGroupCheck.ExcludedMember;
+import com.keyforge.cyberarkpoc.check.ApproverGroupCheck.MemberResult;
+import com.keyforge.cyberarkpoc.check.ApproverGroupCheck.Outcome;
 import com.keyforge.cyberarkpoc.check.ApproverGroupCheck.RoleResult;
 import com.keyforge.cyberarkpoc.check.PolicyHealthCheck.PolicyHealthReport;
-import com.keyforge.cyberarkpoc.model.CyberArkUser;
 import com.keyforge.cyberarkpoc.model.Policy;
-import com.keyforge.cyberarkpoc.model.RoleMember;
 
 import java.io.PrintStream;
 
@@ -18,27 +17,30 @@ public final class ReportPrinter {
 
     public static void print(ApproverGroupReport report, PrintStream out) {
         out.println("USE CASE 1 - approver roles (pattern " + report.rolePattern()
-                + ", minimum " + report.minApprovers() + " valid approvers)");
+                + ", minimum " + report.minApprovers() + " direct members and verified active users)");
+        out.println("  Role search: " + report.search().roles().size() + " role(s), " + report.search().pages()
+                + " page(s), " + (report.search().complete() ? "complete" : "INCOMPLETE"));
+        report.search().notes().forEach(n -> out.println("    note: " + n));
+        out.println("  " + ApproverGroupCheck.VISIBILITY_NOTE);
         if (report.noRolesFound()) {
-            out.println("  No roles matched the pattern.");
+            out.println("  No visible role matched the pattern.");
             return;
         }
         for (RoleResult role : report.roles()) {
             out.println("  [" + role.outcome() + "] " + role.role().name() + " (id " + role.role().id() + "): "
-                    + role.validApprovers().size() + " valid (GetRole lists " + role.details().principals().size()
-                    + " principals)");
-            for (CyberArkUser user : role.validApprovers()) {
-                out.println("      valid     " + user.username());
-            }
-            for (ExcludedMember member : role.excluded()) {
-                out.println("      excluded  " + member.member().name() + " - " + member.reason()
-                        + " (" + member.detail() + ", via " + member.viaRole() + ")");
-            }
-            for (RoleMember group : role.unresolvedGroups()) {
-                out.println("      group     " + group.name() + " - not expanded, not counted");
+                    + role.directMembers() + " direct " + role.directMembersByType() + ", "
+                    + role.activeUsers() + " verified active");
+            role.reasons().forEach(r -> out.println("      reason    " + r));
+            role.notes().forEach(n -> out.println("      note      " + n));
+            for (MemberResult m : role.members()) {
+                out.println("      " + (m.countsAsActive() ? "active    " : "member    ") + m.name() + " - "
+                        + m.outcome() + (m.viaRoleName() == null ? "" : " (via " + m.viaRoleName() + ")")
+                        + ": " + m.detail());
             }
         }
-        out.println("  Insufficient roles: " + report.insufficient().size() + " of " + report.roles().size());
+        out.println("  PASS " + report.count(Outcome.PASS) + ", FAIL " + report.count(Outcome.FAIL)
+                + ", CANNOT_VERIFY " + report.count(Outcome.CANNOT_VERIFY) + ", CHECK_FAILED "
+                + report.count(Outcome.CHECK_FAILED) + " of " + report.roles().size() + " role(s)");
     }
 
     public static void print(PolicyHealthReport report, PrintStream out) {

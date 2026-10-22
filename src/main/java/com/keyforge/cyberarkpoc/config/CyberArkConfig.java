@@ -31,9 +31,33 @@ public record CyberArkConfig(
     public static final String DEFAULT_TOKEN_PATH = "/oauth2/platformtoken";
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 
+    /**
+     * Which documented role-members API to call (docs/API_CONTRACT.md §6): {@code roles} =
+     * {@code POST /Roles/GetRoleMembers?name=} (Roles API reference, SDK; the default) or {@code saasmanage} =
+     * {@code POST /SaasManage/GetRoleMembers?Name=} (data dictionary). Both response shapes are accepted either way;
+     * switch once the client confirms which path their tenant answers.
+     */
+    public static final String ENV_ROLE_MEMBERS_API = "CYBERARK_ROLE_MEMBERS_API";
+
+    public enum RoleMembersApi { ROLES, SAASMANAGE }
+
+    /** Reads {@link #ENV_ROLE_MEMBERS_API}; absent means {@link RoleMembersApi#ROLES}. */
+    public static RoleMembersApi roleMembersApi(Map<String, String> env) {
+        String v = env.get(ENV_ROLE_MEMBERS_API);
+        if (v == null || v.isBlank()) {
+            return RoleMembersApi.ROLES;
+        }
+        return switch (v.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "roles" -> RoleMembersApi.ROLES;
+            case "saasmanage" -> RoleMembersApi.SAASMANAGE;
+            default -> throw new ConfigException(ENV_ROLE_MEMBERS_API + " must be 'roles' or 'saasmanage' but was: " + v);
+        };
+    }
+
     public CyberArkConfig {
         identityBaseUrl = checkedBaseUrl(ENV_IDENTITY_BASE_URL, identityBaseUrl);
-        uapBaseUrl = checkedBaseUrl(ENV_UAP_BASE_URL, uapBaseUrl);
+        // Only the policies use case needs the UAP host, so it may be absent for the Identity checks.
+        uapBaseUrl = uapBaseUrl == null ? null : checkedBaseUrl(ENV_UAP_BASE_URL, uapBaseUrl);
         tokenUrl = tokenUrl == null
                 ? URI.create(identityBaseUrl + DEFAULT_TOKEN_PATH)
                 : checkedBaseUrl(ENV_TOKEN_URL, tokenUrl);
@@ -57,9 +81,10 @@ public record CyberArkConfig(
             }
         }
         String tokenUrl = env.get(ENV_TOKEN_URL);
+        String uap = env.get(ENV_UAP_BASE_URL);
         return new CyberArkConfig(
                 parseUri(ENV_IDENTITY_BASE_URL, env.get(ENV_IDENTITY_BASE_URL)),
-                parseUri(ENV_UAP_BASE_URL, env.get(ENV_UAP_BASE_URL)),
+                uap == null || uap.isBlank() ? null : parseUri(ENV_UAP_BASE_URL, uap),
                 tokenUrl == null || tokenUrl.isBlank() ? null : parseUri(ENV_TOKEN_URL, tokenUrl),
                 env.get(ENV_CLIENT_ID),
                 env.get(ENV_CLIENT_SECRET),

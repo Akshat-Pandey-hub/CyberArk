@@ -9,6 +9,5 @@
     "ReadOnly": true,
     "Description": "string",
     "Name": "string"
-  },
-  "Error": {}
+  }
 }

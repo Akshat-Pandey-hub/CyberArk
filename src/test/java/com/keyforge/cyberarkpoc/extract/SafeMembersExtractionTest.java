@@ -9,7 +9,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.store.Column;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -91,8 +90,6 @@ class SafeMembersExtractionTest {
         assertTrue(m.get("isPredefinedUser").asBoolean());
         assertEquals(22, m.get("permissions").size(), "all 22 documented permission flags");
         assertFalse(m.has("isReadOnly"), "in the field table but not in the example; stored as NULL");
-        List<String> documented = PvwaExtraction.SAFE_MEMBER_COLUMNS.stream().map(Column::name).toList();
-        m.fieldNames().forEachRemaining(f -> assertTrue(documented.contains(f), f + " has no column"));
     }
 
     @Test
@@ -167,6 +164,6 @@ class SafeMembersExtractionTest {
         FetchResult result = members.fetch().apply(mockClient(data));
 
         assertFalse(result.records().toString().contains("MOCK-MEMBER-PASSWORD"));
-        assertEquals(List.of("mockExtraField"), ExtractionRunner.fieldsWithoutColumn(result, members));
+        assertTrue(result.records().get(0).has("mockExtraField"), "an unexpected field is kept, not dropped");
     }
 }

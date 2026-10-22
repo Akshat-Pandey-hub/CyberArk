@@ -8,6 +8,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,13 +55,34 @@ class CyberArkConfigTest {
 
     @Test
     void missingValuesAreRejected() {
-        for (String key : new String[] {CyberArkConfig.ENV_IDENTITY_BASE_URL, CyberArkConfig.ENV_UAP_BASE_URL,
+        for (String key : new String[] {CyberArkConfig.ENV_IDENTITY_BASE_URL,
                 CyberArkConfig.ENV_CLIENT_ID, CyberArkConfig.ENV_CLIENT_SECRET}) {
             Map<String, String> env = validEnv();
             env.remove(key);
             ConfigException e = assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(env));
             assertTrue(e.getMessage().contains(key), e.getMessage());
         }
+    }
+
+    @Test
+    void theUapUrlIsOnlyNeededForThePolicies() {
+        Map<String, String> env = validEnv();
+        env.remove(CyberArkConfig.ENV_UAP_BASE_URL);
+        CyberArkConfig config = CyberArkConfig.fromEnvironment(env);
+
+        assertNull(config.uapBaseUrl(), "use case 1 (Identity only) runs without it");
+        ConfigException e = assertThrows(ConfigException.class,
+                () -> new com.keyforge.cyberarkpoc.client.CyberArkClient(config).listPolicies());
+        assertTrue(e.getMessage().contains(CyberArkConfig.ENV_UAP_BASE_URL));
+    }
+
+    @Test
+    void theRoleMembersApiIsSelectable() {
+        assertEquals(CyberArkConfig.RoleMembersApi.ROLES, CyberArkConfig.roleMembersApi(Map.of()));
+        assertEquals(CyberArkConfig.RoleMembersApi.SAASMANAGE,
+                CyberArkConfig.roleMembersApi(Map.of(CyberArkConfig.ENV_ROLE_MEMBERS_API, "SaasManage")));
+        assertThrows(ConfigException.class,
+                () -> CyberArkConfig.roleMembersApi(Map.of(CyberArkConfig.ENV_ROLE_MEMBERS_API, "other")));
     }
 
     @Test

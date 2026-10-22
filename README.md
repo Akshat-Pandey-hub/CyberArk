@@ -72,12 +72,23 @@ session.
 | `pvwa-discovered-accounts` / `GET /cyberark-extract/pvwa/discovered-accounts` | the **pending** discovered accounts (offset/limit, default 100, max 1000) into `<schema>.pvwa_discovered_account` (key `id`; needs **Vault Admins or PVWAAccountsFeedAdmins**; every run's notes state that onboarded accounts and anything outside the discovery scope are not listed) |
 | `pvwa-safe-members` / `GET /cyberark-extract/pvwa/safe-members` | the members of every Safe into `<schema>.pvwa_safe_member` (key `safeUrlId` + `memberId`; needs View Safe Members; predefined users not requested) |
 
-Each table has one column per documented response field, under exactly the same name (quoted in SQL, e.g.
-`"safeName"`); nested objects such as `creator` or `secretManagement` are `jsonb`. Two more columns:
-`record_uuid` (a random UUID given to the row when it is first stored) and `extracted_at`. CyberArk's own id
-(`safeUrlId`, account `id`) is unique, so a re-run updates the row and keeps its `record_uuid`. A response field
-that has no column is listed in the run's `fields_without_column`. Fields named `secret` or
-`password` are removed at any depth before anything is returned or stored.
+**Columns come from the records CyberArk actually returns, not from a list in the code** (`store/GenericRecordStore`).
+- **Names:** every top-level field gets its own column under exactly the same name and letter case (quoted in SQL,
+  e.g. `"safeName"`). Nested objects and arrays are `jsonb`. A field that only the client's PVWA sends is stored too.
+- **Types:** they follow the values (`boolean`, `bigint`, `numeric`, `text`, `jsonb`). A text value is never turned into
+  a number.
+- **Conflicts:** if values of one field disagree, the column is widened (e.g. number + text gives `text`; anything +
+  object gives `jsonb`). A record is never rejected because of a type, and no value is lost.
+- **Nulls:** a column first seen only as null starts as `text` and takes the field's real type once a value arrives.
+- **Schema changes:** made under a per-table lock and listed in the run's `schema_changes`.
+- **Service columns:** `record_uuid` (random, kept on re-runs) and `extracted_at`.
+- **Key:** CyberArk's own id (`safeUrlId`, account `id`, …) has a unique index, so a re-run updates the row.
+- **Missing values:** a field that disappears is cleared, and missing and `null` are both SQL `NULL`.
+- **Names that can't be columns:** a name over 63 bytes or equal to a service column is kept in `_extra_fields`
+  (`jsonb`).
+- **Secrets:** fields named `secret` or `password` are removed at any depth before anything is returned or stored.
+
+The database user must own or be allowed to alter these tables. The service creates them, so that is normally the case.
 
 Run statuses:
 - **SUCCESS**
@@ -174,13 +185,49 @@ roles, reads the first role's details and members, looks up a user member, and r
 policies page by page. For a real tenant later, make a copy of the environment with the
 real URLs and credentials. Don't commit real credentials.
 
-## How "valid approver" is decided in this phase
+## Use case 1: approver group validation (`ispss-approver-groups`)
 
-A member counts only if it is a user, a `User` row exists, and its `StatusEnum` is `Active`
-(case-insensitive). `StatusEnum` is the documented, non-localized status column (Created, Suspended,
-Invited, Active). The localized `Status` column is shown in the report but never used for the
-decision, not even as a fallback. A missing `StatusEnum` means **not counted**
-(`STATUS_UNKNOWN`), never guessed as valid. Whether Invited or Created users should count is an open
-business decision; under the current rule they don't. Nested roles are expanded. Groups are listed as
-unresolved and not counted, because no verified API for group members is known. Any failed
-call fails the whole check, so a failure can never look like a clean result.
+`java -jar cyberark-poc.jar ispss-approver-groups` or `GET /cyberark-extract/ispss/approver-groups` (via
+`start-rest`). It uses its own Identity login, separate from PVWA. The contract and its open questions are in
+[docs/API_CONTRACT.md](docs/API_CONTRACT.md).
+
+| Setting | Meaning |
+|---|---|
+| `CYBERARK_IDENTITY_BASE_URL` | Identity host for Redrock and Roles. Documented: `https://<tenant>.id.cyberark.cloud`. The client mail's `https://<id>.uap.cyberark.cloud/api` is unconfirmed |
+| `CYBERARK_TOKEN_URL` | optional; default `<identity base>/oauth2/platformtoken` |
+| `CYBERARK_CLIENT_ID`, `CYBERARK_CLIENT_SECRET` | the OAuth confidential-client service user (never printed or stored) |
+| `CYBERARK_ROLE_MEMBERS_API` | `roles` (default, `/Roles/GetRoleMembers`) or `saasmanage` (`/SaasManage/GetRoleMembers`); both response shapes are accepted |
+| `CYBERARK_APPROVER_ROLE_PATTERN` | default `APP-CYA-ISPSS-SCA-AWS-%-BUApprovers` |
+| `CYBERARK_MIN_APPROVERS` | default 3 |
+| `CYBERARK_REDROCK_PAGE_SIZE` | default 1000 |
+| `PG_*` | as for the PVWA extraction |
+
+How it works:
+- **Role search:** a paged Redrock search for the matching roles. A `FullCount` that doesn't match the roles received,
+  or paging that makes no progress, makes the run `INCOMPLETE`.
+- **Per role:** `GetRole`, then the role's direct members, then a User lookup per user.
+- **Nested roles:** expanded only when the Role table shows them as `PrincipalList`.
+
+Per role:
+- **Direct members:** all distinct members of any type, counted by type.
+- **Verified active users:** distinct users, directly or through an expanded nested role, whose `StatusEnum` is
+  `Active`. `Created`, `Invited`, `Suspended`, a missing status or an unknown value do not count. The localized
+  `Status` is never used.
+
+| Outcome | When |
+|---|---|
+| `PASS` | at least 3 direct members **and** at least 3 verified active users |
+| `FAIL` | a threshold is definitely missed |
+| `CANNOT_VERIFY` | unresolved members (groups, nested roles not expanded, users without a User row or status, an incomplete or non-PrincipalList member list) could still change the result |
+| `CHECK_FAILED` | an API call for that role failed or answered something malformed |
+
+**Visibility:** every result carries a visibility note. Redrock only returns what the service user may see, so an empty
+or short result is never proof that a role or member doesn't exist.
+
+**Tables:**
+- `ispss_role` (key `ID`)
+- `ispss_role_member` (key `role_id` + `Guid`)
+- `ispss_user` (key `ID`)
+- `ispss_approver_group_result` (latest result per `role_id`)
+
+Each has a `record_uuid` and `extracted_at`. Nothing in this use case has been run against a real tenant.

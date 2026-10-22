@@ -30,7 +30,7 @@ class ResponseParsingTest {
                   {"Row": {"Guid": "u1", "Name": "a@example.test", "Type": "User"}},
                   {"Row": {"Guid": "g1", "Name": "Group A", "Type": "GROUP"}}]}}""");
 
-        List<RoleMember> members = IdentityResponses.roleMembers("test", body);
+        List<RoleMember> members = IdentityResponses.roleMembers("test", body).members();
 
         assertEquals(2, members.size());
         assertEquals(RoleMember.Type.USER, members.get(0).type());
@@ -56,8 +56,12 @@ class ResponseParsingTest {
     }
 
     @Test
-    void missingResultsArrayMeansNoRows() {
-        assertTrue(IdentityResponses.rows("test", json("{\"success\": true, \"Result\": {}}")).isEmpty());
+    void missingResultsArrayIsInvalidNotAnEmptyList() {
+        // Every official Redrock example has Results; a missing one is malformed, never "no rows".
+        CyberArkApiException e = assertThrows(CyberArkApiException.class,
+                () -> IdentityResponses.rows("test", json("{\"success\": true, \"Result\": {}}")));
+        assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, e.kind());
+        assertTrue(IdentityResponses.rows("test", json("{\"success\": true, \"Result\": {\"Results\": []}}")).isEmpty());
     }
 
     @Test

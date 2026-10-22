@@ -1,4 +1,4 @@
-# Created at 2026-10-22T23:06:32.764
+# Created at 2026-10-23T01:46:59.003
 Boot Manifest-JAR contains absolute paths in classpath 'D:\cyberark-integration-poc\target\test-classes'
 Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
 'other' has different root

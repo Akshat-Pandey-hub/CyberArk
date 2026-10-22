@@ -35,6 +35,10 @@ public final class MockDataset {
     }
 
     final Map<String, RoleRow> roles = new LinkedHashMap<>();
+    /** Documented RoleType per role id; absent means PrincipalList. */
+    final Map<String, String> roleTypes = new LinkedHashMap<>();
+    /** Roles the service user "cannot see" in the Role table (a lookup by id finds nothing). */
+    final java.util.Set<String> hiddenRoles = new java.util.HashSet<>();
     final Map<String, List<MemberRow>> members = new LinkedHashMap<>();
     final Map<String, UserRow> users = new LinkedHashMap<>();
     final List<PolicyRow> policies = new ArrayList<>();
@@ -372,6 +376,19 @@ public final class MockDataset {
     public MockDataset role(String id, String name, String description) {
         roles.put(id, new RoleRow(id, name, description));
         members.putIfAbsent(id, new ArrayList<>());
+        return this;
+    }
+
+    /** A role with a documented RoleType other than PrincipalList (Everybody, Script). */
+    public MockDataset roleOfType(String id, String name, String description, String roleType) {
+        role(id, name, description);
+        roleTypes.put(id, roleType);
+        return this;
+    }
+
+    /** Test-only: the role exists, but a Role table lookup by its id returns no row. */
+    public MockDataset hiddenRole(String id) {
+        hiddenRoles.add(id);
         return this;
     }
 

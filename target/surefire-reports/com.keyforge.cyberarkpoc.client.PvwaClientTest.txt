@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.keyforge.cyberarkpoc.client.PvwaClientTest
 -------------------------------------------------------------------------------
-Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.135 s -- in com.keyforge.cyberarkpoc.client.PvwaClientTest
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.109 s -- in com.keyforge.cyberarkpoc.client.PvwaClientTest

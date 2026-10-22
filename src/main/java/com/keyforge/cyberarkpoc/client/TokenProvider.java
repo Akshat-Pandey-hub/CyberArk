@@ -30,6 +30,8 @@ public final class TokenProvider {
 
     private String token;
     private Instant renewAt = Instant.MIN;
+    /** Every token received, so error text can be masked (see {@link CyberArkClient#sanitize}). */
+    private final java.util.Set<String> issued = new java.util.LinkedHashSet<>();
 
     public TokenProvider(CyberArkConfig config, HttpClient http, Clock clock) {
         this.config = config;
@@ -42,6 +44,11 @@ public final class TokenProvider {
             requestToken();
         }
         return token;
+    }
+
+    /** Every token this provider has received. */
+    public synchronized java.util.List<String> issuedTokens() {
+        return java.util.List.copyOf(issued);
     }
 
     /** Forgets the cached token, e.g. after an API call answered 401. */
@@ -91,6 +98,7 @@ public final class TokenProvider {
         }
         Duration margin = lifetime.compareTo(REFRESH_MARGIN.multipliedBy(2)) > 0 ? REFRESH_MARGIN : Duration.ZERO;
         token = accessToken;
+        issued.add(accessToken);
         renewAt = clock.instant().plus(lifetime).minus(margin);
     }
 }

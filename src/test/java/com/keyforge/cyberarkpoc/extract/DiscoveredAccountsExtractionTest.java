@@ -9,7 +9,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.store.Column;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -92,10 +91,6 @@ class DiscoveredAccountsExtractionTest {
         JsonNode aws = result.records().get(1);
         assertEquals(1530635688L, aws.get("discoveryDate").asLong(), "the example's discoveryDate is kept as sent");
         assertFalse(aws.has("osVersion"), "only populated properties are returned");
-        List<String> columns = PvwaExtraction.DISCOVERED_ACCOUNT_COLUMNS.stream().map(Column::name).toList();
-        for (JsonNode r : result.records()) {
-            r.fieldNames().forEachRemaining(f -> assertTrue(columns.contains(f), f + " has no column"));
-        }
     }
 
     @Test
@@ -152,6 +147,6 @@ class DiscoveredAccountsExtractionTest {
 
         assertFalse(result.records().toString().contains("MOCK-DISCOVERED-SECRET"));
         assertEquals("1", result.records().get(0).at("/platformTypeAccountProperties/awsAccountID").asText());
-        assertEquals(List.of("mockExtraField"), ExtractionRunner.fieldsWithoutColumn(result, discovered));
+        assertTrue(result.records().get(0).has("mockExtraField"), "an unexpected field is kept, not dropped");
     }
 }

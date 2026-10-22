@@ -10,62 +10,104 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Parses the Identity response envelope {@code {"success": .., "Result": {"Results": [{"Row": ..}]}}}
- * (verified in the official SDK; see docs/API_CONTRACT.md).
+ * Parses Identity responses per docs/API_CONTRACT.md.
+ *
+ * <ul>
+ *   <li>Redrock (official "Use queries"): {@code {"success": .., "Result": {"Count", "FullCount", "Results":
+ *       [{"Row": {..}}]}}}.</li>
+ *   <li>Role members, two documented shapes: <b>flat</b> (data dictionary, {@code /SaasManage/GetRoleMembers}, and
+ *       the SDK's reading of {@code /Roles/GetRoleMembers}): the Redrock envelope with one {@code Row} object per
+ *       member; <b>nested</b> (Roles API reference example for {@code /Roles/GetRoleMembers}):
+ *       {@code {"Result": {"success": .., "IsSoftError": .., "Result": {"Results": [{"Row": [{..}, ..]}],
+ *       "FullCount"}}}}, where each {@code Row} is an array of members.</li>
+ * </ul>
+ *
+ * <p>Anything that is neither documented shape, a missing {@code Results} array, or a {@code Row} of the wrong kind
+ * is an {@code INVALID_RESPONSE}; it is never read as an empty list.
  */
 public final class IdentityResponses {
 
     private IdentityResponses() {
     }
 
-    /** The {@code Result} object, after checking {@code success}. */
+    /** Rows of one Redrock page and the totals the page reported ({@code null} when absent). */
+    public record RedrockPage(List<JsonNode> rows, Integer count, Integer fullCount) {
+    }
+
+    /**
+     * The members of one role as one response reported them.
+     *
+     * @param members       the members, in response order (duplicates kept, so the caller can report them)
+     * @param reportedTotal {@code FullCount} when the response has it, else {@code null}
+     * @param softError     the nested shape's {@code IsSoftError} was {@code true} (meaning undocumented)
+     * @param shape         {@code flat} or {@code nested}
+     */
+    public record MemberList(List<RoleMember> members, Integer reportedTotal, boolean softError, String shape) {
+    }
+
+    /** The {@code Result} object of a flat envelope, after checking {@code success}. */
     public static JsonNode result(String endpoint, JsonNode root) {
         if (root == null || !root.isObject()) {
             throw invalid(endpoint, "response is not a JSON object");
         }
-        JsonNode success = root.get("success");
+        return checkedResult(endpoint, root);
+    }
+
+    /** {@code node.success} must be a boolean {@code true}, and {@code node.Result} an object. */
+    private static JsonNode checkedResult(String endpoint, JsonNode node) {
+        JsonNode success = node.get("success");
         if (success == null || !success.isBoolean()) {
             throw invalid(endpoint, "missing boolean 'success'");
         }
         if (!success.asBoolean()) {
-            String message = Json.text(root, "Message");
+            String message = Json.text(node, "Message");
             throw new CyberArkApiException(CyberArkApiException.Kind.API_FAILURE, endpoint, 200,
                     message == null ? "success=false" : "success=false: " + message);
         }
-        JsonNode result = root.get("Result");
+        JsonNode result = node.get("Result");
         if (result == null || !result.isObject()) {
             throw invalid(endpoint, "missing object 'Result'");
         }
         return result;
     }
 
-    /**
-     * The {@code Row} objects of {@code Result.Results}. A missing {@code Results} array means no rows,
-     * as the SDK treats it when listing role members.
-     */
+    /** The {@code Results} array of a result object; it must be present (it may be empty). */
+    private static JsonNode resultsArray(String endpoint, JsonNode result) {
+        JsonNode results = result.get("Results");
+        if (results == null || !results.isArray()) {
+            throw invalid(endpoint, "'Result.Results' is missing or not an array");
+        }
+        return results;
+    }
+
+    /** The {@code Row} objects of {@code Result.Results}. */
     public static List<JsonNode> rows(String endpoint, JsonNode root) {
-        JsonNode results = result(endpoint, root).get("Results");
+        return page(endpoint, root).rows();
+    }
+
+    /** One Redrock page: its rows, {@code Count} and {@code FullCount}. */
+    public static RedrockPage page(String endpoint, JsonNode root) {
+        JsonNode result = result(endpoint, root);
         List<JsonNode> rows = new ArrayList<>();
-        if (results == null || results.isNull()) {
-            return rows;
-        }
-        if (!results.isArray()) {
-            throw invalid(endpoint, "'Result.Results' is not an array");
-        }
-        for (JsonNode item : results) {
+        for (JsonNode item : resultsArray(endpoint, result)) {
             JsonNode row = item.get("Row");
             if (row == null || !row.isObject()) {
                 throw invalid(endpoint, "an item of 'Result.Results' has no object 'Row'");
             }
             rows.add(row);
         }
-        return rows;
+        return new RedrockPage(rows, intOrNull(result.get("Count")), intOrNull(result.get("FullCount")));
     }
 
     public static List<Role> roles(String endpoint, JsonNode root) {
+        return roles(endpoint, rows(endpoint, root));
+    }
+
+    public static List<Role> roles(String endpoint, List<JsonNode> rows) {
         List<Role> roles = new ArrayList<>();
-        for (JsonNode row : rows(endpoint, root)) {
-            roles.add(new Role(requiredText(endpoint, row, "ID"), Json.text(row, "Name"), Json.text(row, "Description")));
+        for (JsonNode row : rows) {
+            roles.add(new Role(requiredText(endpoint, row, "ID"), Json.text(row, "Name"), Json.text(row, "Description"),
+                    Json.text(row, "RoleType"), row));
         }
         return roles;
     }
@@ -94,14 +136,54 @@ public final class IdentityResponses {
                 Json.text(result, "RoleType"), principals);
     }
 
-    public static List<RoleMember> roleMembers(String endpoint, JsonNode root) {
-        List<RoleMember> members = new ArrayList<>();
-        for (JsonNode row : rows(endpoint, root)) {
-            String type = Json.text(row, "Type");
-            members.add(new RoleMember(requiredText(endpoint, row, "Guid"), Json.text(row, "Name"),
-                    RoleMember.Type.fromWire(type), type));
+    /** Role members in either documented shape (see the class comment). */
+    public static MemberList roleMembers(String endpoint, JsonNode root) {
+        if (root == null || !root.isObject()) {
+            throw invalid(endpoint, "response is not a JSON object");
         }
-        return members;
+        JsonNode container;
+        boolean nested;
+        boolean softError = false;
+        if (root.has("success")) {
+            container = checkedResult(endpoint, root);
+            nested = false;
+        } else {
+            JsonNode outer = root.get("Result");
+            if (outer == null || !outer.isObject() || !outer.has("success")) {
+                throw invalid(endpoint, "neither the flat nor the nested documented members shape");
+            }
+            container = checkedResult(endpoint, outer);
+            nested = true;
+            JsonNode soft = outer.get("IsSoftError");
+            softError = soft != null && soft.isBoolean() && soft.asBoolean();
+        }
+        List<RoleMember> members = new ArrayList<>();
+        for (JsonNode item : resultsArray(endpoint, container)) {
+            JsonNode row = item.get("Row");
+            if (!nested) {
+                if (row == null || !row.isObject()) {
+                    throw invalid(endpoint, "flat shape: an item of 'Result.Results' has no object 'Row'");
+                }
+                members.add(member(endpoint, row));
+            } else {
+                if (row == null || !row.isArray()) {
+                    throw invalid(endpoint, "nested shape: an item of 'Result.Result.Results' has no array 'Row'");
+                }
+                for (JsonNode entry : row) {
+                    if (!entry.isObject()) {
+                        throw invalid(endpoint, "nested shape: a 'Row' entry is not an object");
+                    }
+                    members.add(member(endpoint, entry));
+                }
+            }
+        }
+        return new MemberList(members, intOrNull(container.get("FullCount")), softError, nested ? "nested" : "flat");
+    }
+
+    private static RoleMember member(String endpoint, JsonNode row) {
+        String type = Json.text(row, "Type");
+        return new RoleMember(requiredText(endpoint, row, "Guid"), Json.text(row, "Name"),
+                RoleMember.Type.fromWire(type), type, row);
     }
 
     public static List<CyberArkUser> users(String endpoint, JsonNode root) {
@@ -114,9 +196,14 @@ public final class IdentityResponses {
                     Json.text(row, "Email"),
                     Json.text(row, "LastLogin"),
                     Json.text(row, "Status"),
-                    Json.text(row, "StatusEnum")));
+                    Json.text(row, "StatusEnum"),
+                    row));
         }
         return users;
+    }
+
+    private static Integer intOrNull(JsonNode node) {
+        return node != null && node.isNumber() && node.canConvertToInt() ? node.asInt() : null;
     }
 
     private static String requiredText(String endpoint, JsonNode row, String field) {

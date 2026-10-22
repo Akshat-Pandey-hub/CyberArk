@@ -9,7 +9,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.store.Column;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -86,9 +85,6 @@ class UserGroupsExtractionTest {
         assertEquals(0, g.get("id").asInt(), "id 0 is a valid id, not a missing one");
         assertEquals("Vault", g.get("groupType").asText());
         assertEquals(1, g.get("members").size());
-        List<String> columns = PvwaExtraction.USER_GROUP_COLUMNS.stream().map(Column::name).toList();
-        g.fieldNames().forEachRemaining(f -> assertTrue(columns.contains(f), f + " has no column"));
-        assertEquals(columns.size(), g.size(), "every column is in the official result");
     }
 
     @Test
@@ -159,6 +155,6 @@ class UserGroupsExtractionTest {
         FetchResult result = groups.fetch().apply(mockClient(data));
 
         assertFalse(result.records().toString().contains("MOCK-GROUP-SECRET"));
-        assertEquals(List.of("mockExtraField"), ExtractionRunner.fieldsWithoutColumn(result, groups));
+        assertTrue(result.records().get(0).has("mockExtraField"), "an unexpected field is kept, not dropped");
     }
 }

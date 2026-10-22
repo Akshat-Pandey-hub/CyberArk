@@ -1,0 +1,24 @@
+{
+"value": [
+{
+"safeUrlId": "VaultInternal",
+"safeName": "VaultInternal",
+"safeNumber": 2,
+"description": "",
+"location": "\\",
+"creator": {
+"id": "2",
+"name": "Administrator"
+},
+"olacEnabled": false,
+"managingCPM": "",
+"numberOfVersionsRetention": null,
+"numberOfDaysRetention": 30,
+"autoPurgeEnabled": false,
+"creationTime": 1608827926,
+"lastModificationTime": 1610319618268452,
+"isExpiredMember": false
+}
+],
+"count": 1
+}

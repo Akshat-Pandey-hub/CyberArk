@@ -9,7 +9,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.store.Column;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -89,9 +88,6 @@ class PlatformDetailsExtractionTest {
         assertEquals("WinDesktopLocal", d.get("PlatformID").asText());
         assertTrue(d.get("Active").asBoolean());
         assertEquals("Windows Desktop Local Accounts", d.at("/Properties/PolicyName").asText());
-        List<String> columns = PvwaExtraction.PLATFORM_DETAIL_COLUMNS.stream().map(Column::name).toList();
-        assertEquals(columns, List.of("PlatformID", "Properties", "Active"));
-        d.fieldNames().forEachRemaining(f -> assertTrue(columns.contains(f), f + " has no column"));
     }
 
     @Test
@@ -175,6 +171,6 @@ class PlatformDetailsExtractionTest {
 
         assertFalse(result.records().toString().contains("MOCK-PLATFORM-PASSWORD"));
         assertEquals("P1", result.records().get(0).at("/Properties/PolicyID").asText());
-        assertEquals(List.of("mockExtraField"), ExtractionRunner.fieldsWithoutColumn(result, details));
+        assertTrue(result.records().get(0).has("mockExtraField"), "an unexpected field is kept, not dropped");
     }
 }

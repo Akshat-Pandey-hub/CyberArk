@@ -1,10 +1,12 @@
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\ApproverGroupCheckTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\ApproverGroupRunTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\PolicyHealthCheckTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\CyberArkClientTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\ErrorSanitizerTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\OfficialExamplesContractTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\PvwaClientTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\ResponseParsingTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\RoleMembersParsingTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\SecretRedactorTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\config\CyberArkConfigTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\config\PvwaConfigTest.java
@@ -20,6 +22,7 @@ D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\mock\MockCybe
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\MockFixture.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\rest\ExtractionRestServerTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\rest\RestFailureHandlingTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\store\GenericStorePostgresTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\store\PostgresIntegrationTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\store\StoreSqlTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\StubHttpServer.java

@@ -99,6 +99,24 @@ class PostgresIntegrationTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private void assertColumnsMatchRecords(Map<String, Object> result, String table) throws Exception {
+        java.util.Set<String> expected = new java.util.LinkedHashSet<>(List.of("record_uuid", "extracted_at"));
+        for (JsonNode r : (List<JsonNode>) result.get("records")) {
+            r.fieldNames().forEachRemaining(expected::add);
+        }
+        assertEquals(expected, new java.util.LinkedHashSet<>(columns(table)),
+                "one column per field actually received, under its exact name");
+    }
+
+    private String columnType(String table, String column) throws Exception {
+        try (Connection conn = db.open(); Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(
+                "SELECT data_type FROM information_schema.columns WHERE table_schema = '" + db.schema()
+                        + "' AND table_name = '" + table + "' AND column_name = '" + column + "'")) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
     @Test
     void safesAreStoredOneDocumentedFieldPerColumn() throws Exception {
         Map<String, Object> result = runRoute("pvwa/safes");
@@ -106,10 +124,7 @@ class PostgresIntegrationTest {
         assertEquals("SUCCESS", result.get("status"), String.valueOf(result));
         assertEquals(30, result.get("extracted"));
         assertEquals(30, result.get("inserted"));
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.SAFE_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_safe"));
+        assertColumnsMatchRecords(result, "pvwa_safe");
         String t = db.schema() + ".pvwa_safe";
         assertEquals(30, count("SELECT count(*) FROM " + t));
         assertEquals(30, count("SELECT count(DISTINCT record_uuid) FROM " + t));
@@ -128,8 +143,8 @@ class PostgresIntegrationTest {
             assertEquals(1_700_000_000_000_130L, rs.getLong(6), "large microsecond time fits");
             assertTrue(rs.getTimestamp(7) != null);
         }
-        assertEquals(List.of("mockTenantSpecificField"), result.get("fields_without_column"),
-                "an undocumented field is reported, not silently dropped");
+        assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"mockTenantSpecificField\" = 'kept as-is'"),
+                "an undocumented field is stored in its own column, not dropped");
         assertEquals(0, count("SELECT count(*) FROM information_schema.tables WHERE table_schema = '"
                 + db.schema() + "' AND table_name <> 'pvwa_safe'"), "no other table is created");
         assertEquals(0, mock.openPvwaSessions(), "logged off");
@@ -180,7 +195,6 @@ class PostgresIntegrationTest {
                 "no nested secret stored");
         assertEquals(120, count("SELECT count(*) FROM " + table + " WHERE \"secretType\" = 'password' "
                 + "AND \"secretManagement\"->>'status' = 'success' AND \"id\" LIKE '12\\_%'"), "fields mapped");
-        assertEquals(List.of(), result.get("fields_without_column"), "every account field has a column");
         assertFalse(MAPPER.writeValueAsString(result).contains("MOCK-SECRET-VALUE"), "REST body has no secret");
     }
 
@@ -191,12 +205,9 @@ class PostgresIntegrationTest {
         assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
         assertEquals(88, first.get("inserted"));
         String t = db.schema() + ".pvwa_safe_member";
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.SAFE_MEMBER_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_safe_member"));
-        assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                + "AND pg_get_constraintdef(oid) = 'UNIQUE (\"safeUrlId\", \"memberId\")'"), "two-part unique key");
+        assertColumnsMatchRecords(first, "pvwa_safe_member");
+        assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                + "AND pg_get_indexdef(i.indexrelid) LIKE '%(\"safeUrlId\", \"memberId\")'"), "two-part unique key");
         assertEquals(30, count("SELECT count(*) FROM " + t + " WHERE \"memberId\" = 1"), "one row per Safe");
         assertEquals(88, count("SELECT count(*) FROM " + t + " WHERE \"membershipExpirationDate\" IS NULL "
                 + "AND \"isReadOnly\" AND NOT \"isPredefinedUser\" AND \"permissions\"->>'listAccounts' = 'true' "
@@ -220,14 +231,10 @@ class PostgresIntegrationTest {
 
         assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
         assertEquals(3, first.get("inserted"));
-        assertEquals(List.of(), first.get("fields_without_column"));
         String t = db.schema() + ".pvwa_target_platform";
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.TARGET_PLATFORM_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_target_platform"));
-        assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                + "AND pg_get_constraintdef(oid) = 'UNIQUE (\"PlatformID\")'"));
+        assertColumnsMatchRecords(first, "pvwa_target_platform");
+        assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                + "AND pg_get_indexdef(i.indexrelid) LIKE '%(\"PlatformID\")'"));
         assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"PlatformID\" = 'WinServerLocal' AND \"ID\" = 11 "
                 + "AND \"Active\" AND \"CredentialsManagementPolicy\"->'Change'->>'RequirePasswordEveryXDays' = '30' "
                 + "AND \"PrivilegedSessionManagement\"->>'PSMServerId' = ''"), "fields and nested policy mapped");
@@ -265,12 +272,10 @@ class PostgresIntegrationTest {
 
             assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
             assertEquals(4, first.get("inserted"));
-            assertEquals(List.of(), first.get("fields_without_column"));
             String t = db.schema() + ".pvwa_platform_detail";
-            assertEquals(List.of("record_uuid", "PlatformID", "Properties", "Active", "extracted_at"),
-                    columns("pvwa_platform_detail"));
-            assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                    + "AND pg_get_constraintdef(oid) = 'UNIQUE (\"PlatformID\")'"));
+            assertColumnsMatchRecords(first, "pvwa_platform_detail");
+            assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                    + "AND pg_get_indexdef(i.indexrelid) LIKE '%(\"PlatformID\")'"));
             assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"PlatformID\" = 'WinServerLocal' AND \"Active\" "
                     + "AND \"Properties\"->>'RequirePasswordChangeEveryXDays' = '30'"), "Properties kept as jsonb");
             assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"PlatformID\" = 'UnixSSH' AND NOT \"Active\""));
@@ -296,14 +301,10 @@ class PostgresIntegrationTest {
 
         assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
         assertEquals(30, first.get("inserted"));
-        assertEquals(List.of(), first.get("fields_without_column"));
         String t = db.schema() + ".pvwa_user";
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.USER_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_user"));
-        assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                + "AND pg_get_constraintdef(oid) = 'UNIQUE (id)'"));
+        assertColumnsMatchRecords(first, "pvwa_user");
+        assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                + "AND pg_get_indexdef(i.indexrelid) LIKE '%(id)'"));
         assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"id\" = 2 AND \"username\" = 'Administrator' "
                 + "AND \"userDN\" IS NULL AND \"enabled\" AND NOT \"suspended\" AND NOT \"componentUser\" "
                 + "AND \"groupsMembership\" @> '[{\"groupName\": \"Vault Admins\"}]' "
@@ -331,14 +332,10 @@ class PostgresIntegrationTest {
 
         assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
         assertEquals(30, first.get("inserted"));
-        assertEquals(List.of(), first.get("fields_without_column"));
         String t = db.schema() + ".pvwa_user_group";
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.USER_GROUP_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_user_group"));
-        assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                + "AND pg_get_constraintdef(oid) = 'UNIQUE (id)'"));
+        assertColumnsMatchRecords(first, "pvwa_user_group");
+        assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                + "AND pg_get_indexdef(i.indexrelid) LIKE '%(id)'"));
         assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"id\" = 11 AND \"groupName\" = 'Vault Admins' "
                 + "AND \"groupType\" = 'Vault' AND \"dn\" IS NULL AND \"directory\" IS NULL "
                 + "AND \"members\" @> '[{\"username\": \"Administrator\", \"id\": 2}]'"),
@@ -365,16 +362,12 @@ class PostgresIntegrationTest {
 
         assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
         assertEquals(130, first.get("inserted"));
-        assertEquals(List.of(), first.get("fields_without_column"));
         assertTrue(String.valueOf(first.get("notes")).contains("not proof that it does not exist"),
                 "the scope note reaches the REST response");
         String t = db.schema() + ".pvwa_discovered_account";
-        List<String> expected = new java.util.ArrayList<>(List.of("record_uuid"));
-        PvwaExtraction.DISCOVERED_ACCOUNT_COLUMNS.forEach(c -> expected.add(c.name()));
-        expected.add("extracted_at");
-        assertEquals(expected, columns("pvwa_discovered_account"));
-        assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + t + "'::regclass "
-                + "AND pg_get_constraintdef(oid) = 'UNIQUE (id)'"));
+        assertColumnsMatchRecords(first, "pvwa_discovered_account");
+        assertEquals(1, count("SELECT count(*) FROM pg_index i WHERE i.indrelid = '" + t + "'::regclass AND i.indisunique "
+                + "AND pg_get_indexdef(i.indexrelid) LIKE '%(id)'"));
         assertEquals(14, count("SELECT count(*) FROM " + t + " WHERE \"privileged\""), "12 Windows admins + AWS + Unix");
         assertEquals(1, count("SELECT count(*) FROM " + t + " WHERE \"id\" = '18_901' AND \"discoveryDate\" = 1700000800 "
                 + "AND \"discoveryDateTime\" IS NULL AND \"osVersion\" IS NULL "
@@ -399,10 +392,62 @@ class PostgresIntegrationTest {
     }
 
     @Test
-    void aMemberWithAWrongTypeFailsAloneAndIsReported() throws Exception {
+    void approverGroupRunStoresRolesMembersUsersAndResultsAndReRunsUpdateInPlace() throws Exception {
+        try (com.keyforge.cyberarkpoc.MockFixture f = com.keyforge.cyberarkpoc.MockFixture.start(SampleData.demo())) {
+            com.keyforge.cyberarkpoc.check.ApproverGroupRun.Settings settings =
+                    com.keyforge.cyberarkpoc.check.ApproverGroupRun.Settings.defaults();
+            Map<String, Object> first = com.keyforge.cyberarkpoc.check.ApproverGroupRun.run(f.client, db, settings);
+
+            assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
+            assertEquals(Map.of("PASS", 2L, "FAIL", 1L, "CANNOT_VERIFY", 2L, "CHECK_FAILED", 0L), first.get("summary"));
+            String s = db.schema();
+            assertEquals(List.of("record_uuid", "ID", "Name", "RoleType", "ReadOnly", "Description", "extracted_at"),
+                    columns("ispss_role"));
+            assertEquals(List.of("record_uuid", "role_id", "Guid", "Name", "Type", "IsEffective", "OrgPath", "OrgId",
+                    "extracted_at"), columns("ispss_role_member"));
+            assertEquals(6, count("SELECT count(*) FROM " + s + ".ispss_role"), "5 matching roles + 1 nested role");
+            assertEquals(17, count("SELECT count(*) FROM " + s + ".ispss_role_member"));
+            assertEquals(14, count("SELECT count(*) FROM " + s + ".ispss_user"), "the missing user has no row");
+            assertEquals(5, count("SELECT count(*) FROM " + s + ".ispss_approver_group_result"));
+            assertEquals(1, count("SELECT count(*) FROM pg_constraint WHERE conrelid = '" + s
+                    + ".ispss_role_member'::regclass AND pg_get_constraintdef(oid) = 'UNIQUE (role_id, \"Guid\")'"));
+            assertEquals(2, count("SELECT count(*) FROM " + s + ".ispss_role_member WHERE role_id = 'role-ops-leads'"));
+            assertEquals(1, count("SELECT count(*) FROM " + s + ".ispss_approver_group_result WHERE role_id = 'role-mkt' "
+                    + "AND outcome = 'CANNOT_VERIFY' AND direct_members = 3 AND active_users = 2 "
+                    + "AND total_threshold_met AND active_threshold_met IS NULL "
+                    + "AND (direct_members_by_type->>'Group')::int = 1 AND members @> '[{\"outcome\": \"GROUP_NOT_EXPANDED\"}]'"));
+            assertEquals(1, count("SELECT count(*) FROM " + s + ".ispss_user WHERE \"ID\" = 'pay.approver3' "
+                    + "AND \"StatusEnum\" = 'Suspended'"));
+            assertEquals(0, count("SELECT count(*) FROM (SELECT row_to_json(t)::text AS j FROM " + s + ".ispss_role t "
+                    + "UNION ALL SELECT row_to_json(t)::text FROM " + s + ".ispss_role_member t "
+                    + "UNION ALL SELECT row_to_json(t)::text FROM " + s + ".ispss_user t "
+                    + "UNION ALL SELECT row_to_json(t)::text FROM " + s + ".ispss_approver_group_result t) x "
+                    + "WHERE j LIKE '%mock-token-%' OR j LIKE '%" + MockCyberArkServer.MOCK_CLIENT_SECRET + "%'"),
+                    "no token or client secret stored");
+            assertFalse(MAPPER.writeValueAsString(first).contains("mock-token-"), "no token in the response");
+            try (Connection conn = db.open(); Statement st = conn.createStatement()) {
+                st.execute("CREATE TABLE " + s + ".snap_m AS SELECT role_id, \"Guid\", record_uuid FROM "
+                        + s + ".ispss_role_member");
+            }
+
+            Map<String, Object> second = com.keyforge.cyberarkpoc.check.ApproverGroupRun.run(f.client, db, settings);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Map<String, Integer>> stored = (Map<String, Map<String, Integer>>) second.get("stored");
+            assertEquals(0, stored.get("ispss_role_member").get("inserted"));
+            assertEquals(17, stored.get("ispss_role_member").get("updated"));
+            assertEquals(0, stored.get("ispss_approver_group_result").get("inserted"));
+            assertEquals(17, count("SELECT count(*) FROM " + s + ".ispss_role_member"));
+            assertEquals(0, count("SELECT count(*) FROM " + s + ".ispss_role_member m JOIN " + s + ".snap_m x "
+                    + "USING (role_id, \"Guid\") WHERE m.record_uuid <> x.record_uuid"), "uuids unchanged");
+        }
+    }
+
+    @Test
+    void aValueOfAnotherTypeWidensTheColumnInsteadOfFailingTheRecord() throws Exception {
         MockDataset data = new MockDataset().safe("S1", "S1", 1)
                 .safeMember("S1", "S1", 1, 5, "good", "User")
-                .safeMember("S1", "S1", 1, 6, "bad", "User")
+                .safeMember("S1", "S1", 1, 6, "other", "User")
                 .withSafeMemberField("S1", "isReadOnly", "not-a-boolean");
         try (MockCyberArkServer other = MockCyberArkServer.start(data, 0)) {
             PvwaConfig config = new PvwaConfig(URI.create(other.rootUrl() + MockCyberArkServer.PVWA_APP), "CyberArk",
@@ -413,18 +458,17 @@ class PostgresIntegrationTest {
             Map<String, Object> result = ExtractionRestServer.run("pvwa/safe-members",
                     routes.get("pvwa/safe-members"), () -> new PvwaClient(config));
 
-            assertEquals("COMPLETED_WITH_FAILURES", result.get("status"), String.valueOf(result));
-            assertEquals(1, result.get("inserted"));
-            assertEquals(1, result.get("failed"));
-            assertTrue(String.valueOf(result.get("error")).contains("isReadOnly is not true/false"));
-            assertEquals(1, count("SELECT count(*) FROM " + db.schema() + ".pvwa_safe_member WHERE \"memberName\" = 'good'"));
+            assertEquals("SUCCESS", result.get("status"), String.valueOf(result));
+            assertEquals(2, result.get("inserted"));
+            assertEquals("text", columnType("pvwa_safe_member", "isReadOnly"), "true and a string: text holds both");
+            assertEquals(1, count("SELECT count(*) FROM " + db.schema() + ".pvwa_safe_member WHERE \"isReadOnly\" = 'true'"));
+            assertEquals(1, count("SELECT count(*) FROM " + db.schema() + ".pvwa_safe_member WHERE \"isReadOnly\" = 'not-a-boolean'"));
         }
     }
 
     @Test
     void unexpectedErrorIsReportedAndTheSessionIsClosed() throws Exception {
-        PvwaExtraction broken = new PvwaExtraction("pvwa-broken", "pvwa_broken", "id",
-                List.of(com.keyforge.cyberarkpoc.store.Column.text("id")), "throws after logon",
+        PvwaExtraction broken = new PvwaExtraction("pvwa-broken", "pvwa_broken", "id", "throws after logon",
                 client -> {
                     client.verify();
                     throw new IllegalStateException("simulated bug with password=" + MockCyberArkServer.MOCK_VAULT_PASSWORD);
