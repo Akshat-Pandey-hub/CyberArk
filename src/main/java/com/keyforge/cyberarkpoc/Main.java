@@ -2,14 +2,16 @@ package com.keyforge.cyberarkpoc;
 
 import com.keyforge.cyberarkpoc.check.ApproverGroupCheck;
 import com.keyforge.cyberarkpoc.check.ApproverGroupRun;
-import com.keyforge.cyberarkpoc.check.PolicyHealthCheck;
+import com.keyforge.cyberarkpoc.check.PolicyHealthRun;
 import com.keyforge.cyberarkpoc.check.ReportPrinter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.keyforge.cyberarkpoc.client.CyberArkApiException;
 import com.keyforge.cyberarkpoc.client.CyberArkClient;
+import com.keyforge.cyberarkpoc.client.PolicyClient;
 import com.keyforge.cyberarkpoc.client.PvwaClient;
 import com.keyforge.cyberarkpoc.config.ConfigException;
 import com.keyforge.cyberarkpoc.config.CyberArkConfig;
+import com.keyforge.cyberarkpoc.config.PolicyConfig;
 import com.keyforge.cyberarkpoc.config.PvwaConfig;
 import com.keyforge.cyberarkpoc.extract.ExtractionSettings;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
@@ -23,8 +25,9 @@ import java.util.concurrent.CountDownLatch;
 
 /**
  * {@code mock [port]} starts the local mock CyberArk (default port 8300).
- * {@code check} runs both use-case checks against the URLs in the CYBERARK_* environment variables
- * and prints a report. It only reads; it sends no notifications and writes nothing.
+ * {@code check} runs the Use Case 1 check against the URLs in the CYBERARK_* environment variables and prints a
+ * text report. It only reads; it sends no notifications and writes nothing. Use Case 2 runs as
+ * {@code ispss-policy-health}.
  * {@code pvwa-verify} logs on to PVWA, calls the documented Verify health check, prints it, and logs off.
  * {@code start-rest} starts the extraction REST service (see {@link ExtractionRestServer}).
  *
@@ -55,7 +58,8 @@ public final class Main {
             case "pvwa-users" -> System.exit(runPvwaRoute("pvwa/users", false));
             case "pvwa-user-groups" -> System.exit(runPvwaRoute("pvwa/user-groups", false));
             case "pvwa-discovered-accounts" -> System.exit(runPvwaRoute("pvwa/discovered-accounts", false));
-            case ApproverGroupRun.COMMAND -> System.exit(runApproverGroups());
+            case ApproverGroupRun.COMMAND -> System.exit(runStandalone(APPROVER_GROUPS_ROUTE, approverGroupsRoute()));
+            case PolicyHealthRun.COMMAND -> System.exit(runStandalone(POLICY_HEALTH_ROUTE, policyHealthRoute()));
             case "start-rest" -> runRest();
             default -> {
                 usage();
@@ -65,6 +69,13 @@ public final class Main {
     }
 
     private static void runMock(String[] args) throws IOException, InterruptedException {
+        try {
+            Class.forName("com.keyforge.cyberarkpoc.mock.MockCyberArkServer");
+        } catch (ClassNotFoundException e) {
+            // cyberark-extract.jar (the deliverable) is built without the test mock.
+            System.err.println("The mock CyberArk is not included in this build; use target/cyberark-poc.jar for local tests.");
+            System.exit(2);
+        }
         int port = DEFAULT_MOCK_PORT;
         if (args.length > 1) {
             try {
@@ -104,9 +115,8 @@ public final class Main {
         try {
             ReportPrinter.print(new ApproverGroupCheck(client).run(), System.out);
             System.out.println();
-            ReportPrinter.print(new PolicyHealthCheck(client).run(), System.out);
-            System.out.println();
-            System.out.println("Checks completed. No notifications were sent (out of scope for this phase).");
+            System.out.println("Check completed. No notifications were sent (out of scope for this phase). "
+                    + "Use case 2: run " + PolicyHealthRun.COMMAND + ".");
             return 0;
         } catch (CyberArkApiException e) {
             System.err.println("CHECK FAILED - a CyberArk call did not succeed: " + e.getMessage());
@@ -169,9 +179,26 @@ public final class Main {
                 });
     }
 
-    /** CLI for use case 1; exit codes as for the extractions. The result is printed as JSON. */
-    private static int runApproverGroups() {
-        Map<String, Object> result = ExtractionRestServer.run(APPROVER_GROUPS_ROUTE, approverGroupsRoute());
+    static final String POLICY_HEALTH_ROUTE = "ispss/policy-health";
+
+    /**
+     * Use case 2 with its own custom OAuth2 token (separate from Use Case 1 and PVWA). Settings are read for every run,
+     * so a configuration error is reported in that run's JSON.
+     */
+    static ExtractionRestServer.StandaloneRoute policyHealthRoute() {
+        return new ExtractionRestServer.StandaloneRoute(
+                "Use case 2: SCA/SIA access policies in Error or Warning (UAP or SCA policies API, custom OAuth2 "
+                        + "token) -> uap_policy, uap_policy_health_result",
+                () -> {
+                    Map<String, String> env = System.getenv();
+                    return PolicyHealthRun.run(new PolicyClient(PolicyConfig.fromEnvironment(env)),
+                            DbConfig.fromEnvironment(env));
+                });
+    }
+
+    /** CLI for a use case; exit codes as for the extractions. The result is printed as JSON. */
+    static int runStandalone(String name, ExtractionRestServer.StandaloneRoute route) {
+        Map<String, Object> result = ExtractionRestServer.run(name, route);
         try {
             System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(result));
         } catch (IOException e) {
@@ -207,8 +234,9 @@ public final class Main {
         }
         Map<String, ExtractionRestServer.Route> routes =
                 ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), extraction);
-        Map<String, ExtractionRestServer.StandaloneRoute> standalone = Map.of(APPROVER_GROUPS_ROUTE,
-                approverGroupsRoute());
+        Map<String, ExtractionRestServer.StandaloneRoute> standalone = new java.util.LinkedHashMap<>();
+        standalone.put(APPROVER_GROUPS_ROUTE, approverGroupsRoute());
+        standalone.put(POLICY_HEALTH_ROUTE, policyHealthRoute());
         ExtractionRestServer rest = new ExtractionRestServer(settings,
                 () -> new PvwaClient(PvwaConfig.fromEnvironment(System.getenv())), routes, standalone);
         rest.start();
@@ -230,8 +258,9 @@ public final class Main {
     private static void usage() {
         System.err.println("Usage:");
         System.err.println("  java -jar cyberark-poc.jar mock [port]   start the local mock CyberArk (default "
-                + DEFAULT_MOCK_PORT + ")");
-        System.err.println("  java -jar cyberark-poc.jar check         run both checks (reads CYBERARK_* env vars)");
+                + DEFAULT_MOCK_PORT + "; test build only, not in cyberark-extract.jar)");
+        System.err.println("  java -jar cyberark-poc.jar check         use case 1 as a text report (reads CYBERARK_* "
+                + "env vars, writes nothing)");
         System.err.println("  java -jar cyberark-poc.jar pvwa-verify   PVWA logon, Verify health check, logoff "
                 + "(reads CYBERARK_PVWA_* env vars)");
         System.err.println("  java -jar cyberark-poc.jar pvwa-safes    extract all Safes into PostgreSQL "
@@ -252,6 +281,8 @@ public final class Main {
                 + "accounts (needs Vault Admins or PVWAAccountsFeedAdmins) into PostgreSQL");
         System.err.println("  java -jar cyberark-poc.jar " + ApproverGroupRun.COMMAND + " use case 1: approver roles "
                 + "(CYBERARK_IDENTITY_BASE_URL, CYBERARK_CLIENT_ID/SECRET + PG_* env vars)");
+        System.err.println("  java -jar cyberark-poc.jar " + PolicyHealthRun.COMMAND + " use case 2: policies in Error "
+                + "or Warning (CYBERARK_POLICY_* / CYBERARK_UAP_BASE_URL or CYBERARK_SCA_BASE_URL + PG_* env vars)");
         System.err.println("  java -jar cyberark-poc.jar start-rest   start the extraction REST service "
                 + "(REST_* + CYBERARK_PVWA_* + PG_* env vars)");
     }

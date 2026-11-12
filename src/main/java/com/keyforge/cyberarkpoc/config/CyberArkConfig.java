@@ -7,22 +7,19 @@ import java.util.Map;
 /**
  * Connection settings for the CyberArk APIs.
  *
- * <p>Identity calls (token, Redrock, Roles) and Access Control Policies calls go to two separately
- * configurable base URLs, because the client mail puts the Identity calls on the {@code uap} host
- * while the official SDK sends them to the Identity host (see docs/API_CONTRACT.md). The token URL
- * is configurable on its own for the same reason; by default it is the Identity base URL plus
- * {@value #DEFAULT_TOKEN_PATH}.
+ * <p>The Identity base URL is configurable because the client mail puts the Identity calls on the {@code uap} host
+ * while the official docs and SDK send them to the Identity host (see docs/API_CONTRACT.md). The token URL is
+ * configurable on its own for the same reason; by default it is the Identity base URL plus
+ * {@value #DEFAULT_TOKEN_PATH}. The policies (Use Case 2) have their own settings: {@link PolicyConfig}.
  */
 public record CyberArkConfig(
         URI identityBaseUrl,
-        URI uapBaseUrl,
         URI tokenUrl,
         String clientId,
         String clientSecret,
         Duration requestTimeout) {
 
     public static final String ENV_IDENTITY_BASE_URL = "CYBERARK_IDENTITY_BASE_URL";
-    public static final String ENV_UAP_BASE_URL = "CYBERARK_UAP_BASE_URL";
     public static final String ENV_TOKEN_URL = "CYBERARK_TOKEN_URL";
     public static final String ENV_CLIENT_ID = "CYBERARK_CLIENT_ID";
     public static final String ENV_CLIENT_SECRET = "CYBERARK_CLIENT_SECRET";
@@ -56,8 +53,6 @@ public record CyberArkConfig(
 
     public CyberArkConfig {
         identityBaseUrl = checkedBaseUrl(ENV_IDENTITY_BASE_URL, identityBaseUrl);
-        // Only the policies use case needs the UAP host, so it may be absent for the Identity checks.
-        uapBaseUrl = uapBaseUrl == null ? null : checkedBaseUrl(ENV_UAP_BASE_URL, uapBaseUrl);
         tokenUrl = tokenUrl == null
                 ? URI.create(identityBaseUrl + DEFAULT_TOKEN_PATH)
                 : checkedBaseUrl(ENV_TOKEN_URL, tokenUrl);
@@ -71,20 +66,10 @@ public record CyberArkConfig(
 
     /** Builds the configuration from environment-style key/value pairs. */
     public static CyberArkConfig fromEnvironment(Map<String, String> env) {
-        String timeout = env.get(ENV_TIMEOUT_SECONDS);
-        Duration requestTimeout = DEFAULT_TIMEOUT;
-        if (timeout != null && !timeout.isBlank()) {
-            try {
-                requestTimeout = Duration.ofSeconds(Long.parseLong(timeout.trim()));
-            } catch (NumberFormatException e) {
-                throw new ConfigException(ENV_TIMEOUT_SECONDS + " must be a whole number of seconds");
-            }
-        }
+        Duration requestTimeout = timeout(env);
         String tokenUrl = env.get(ENV_TOKEN_URL);
-        String uap = env.get(ENV_UAP_BASE_URL);
         return new CyberArkConfig(
                 parseUri(ENV_IDENTITY_BASE_URL, env.get(ENV_IDENTITY_BASE_URL)),
-                uap == null || uap.isBlank() ? null : parseUri(ENV_UAP_BASE_URL, uap),
                 tokenUrl == null || tokenUrl.isBlank() ? null : parseUri(ENV_TOKEN_URL, tokenUrl),
                 env.get(ENV_CLIENT_ID),
                 env.get(ENV_CLIENT_SECRET),
@@ -94,12 +79,25 @@ public record CyberArkConfig(
     /** Never prints the secret. */
     @Override
     public String toString() {
-        return "CyberArkConfig[identityBaseUrl=" + identityBaseUrl + ", uapBaseUrl=" + uapBaseUrl
+        return "CyberArkConfig[identityBaseUrl=" + identityBaseUrl
                 + ", tokenUrl=" + tokenUrl + ", clientId=" + clientId + ", clientSecret=***"
                 + ", requestTimeout=" + requestTimeout + "]";
     }
 
-    private static URI parseUri(String name, String value) {
+    /** {@link #ENV_TIMEOUT_SECONDS}, or {@link #DEFAULT_TIMEOUT}; shared with {@link PolicyConfig}. */
+    static Duration timeout(Map<String, String> env) {
+        String timeout = env.get(ENV_TIMEOUT_SECONDS);
+        if (timeout == null || timeout.isBlank()) {
+            return DEFAULT_TIMEOUT;
+        }
+        try {
+            return Duration.ofSeconds(Long.parseLong(timeout.trim()));
+        } catch (NumberFormatException e) {
+            throw new ConfigException(ENV_TIMEOUT_SECONDS + " must be a whole number of seconds");
+        }
+    }
+
+    static URI parseUri(String name, String value) {
         if (value == null || value.isBlank()) {
             throw new ConfigException(name + " is required");
         }
@@ -111,7 +109,7 @@ public record CyberArkConfig(
     }
 
     /** https only, except plain http to a loopback host (the local mock). Trailing slash removed. */
-    private static URI checkedBaseUrl(String name, URI uri) {
+    static URI checkedBaseUrl(String name, URI uri) {
         if (uri == null) {
             throw new ConfigException(name + " is required");
         }
@@ -128,7 +126,7 @@ public record CyberArkConfig(
         return text.endsWith("/") ? URI.create(text.substring(0, text.length() - 1)) : uri;
     }
 
-    private static String required(String name, String value) {
+    static String required(String name, String value) {
         if (value == null || value.isBlank()) {
             throw new ConfigException(name + " is required");
         }

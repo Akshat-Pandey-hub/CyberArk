@@ -5,7 +5,6 @@ import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
 import com.keyforge.cyberarkpoc.mock.MockDataset;
 import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.model.Policy;
 import com.keyforge.cyberarkpoc.model.Role;
 import com.keyforge.cyberarkpoc.model.RoleMember;
 import org.junit.jupiter.api.Test;
@@ -74,21 +73,10 @@ class CyberArkClientTest {
     }
 
     @Test
-    void policiesAreReadAcrossAllPages() {
-        try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            List<Policy> policies = f.client.listPolicies();
-
-            assertEquals(7, policies.size());
-            assertEquals("pol-007", policies.get(6).policyId());
-            assertEquals(3, f.mock.requestCount(MockCyberArkServer.POLICIES));
-        }
-    }
-
-    @Test
     void tokenIsRequestedOnceAndReused() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
             f.client.findRolesByNamePattern(PATTERN, 1000, 10);
-            f.client.listPolicies();
+            f.client.getRoleMembers("role-fin");
 
             assertEquals(1, f.mock.requestCount(MockCyberArkServer.TOKEN));
         }
@@ -97,7 +85,8 @@ class CyberArkClientTest {
     @Test
     void wrongSecretIsAnAuthenticationFailure() {
         try (MockFixture f = MockFixture.startWithSecret(SampleData.demo(), "wrong-secret")) {
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, f.client::listPolicies);
+            CyberArkApiException e = assertThrows(CyberArkApiException.class,
+                    () -> f.client.findRolesByNamePattern(PATTERN, 1000, 10));
 
             assertEquals(CyberArkApiException.Kind.AUTHENTICATION, e.kind());
             assertEquals(401, e.httpStatus());
@@ -108,10 +97,10 @@ class CyberArkClientTest {
     @Test
     void revokedTokenIsRenewedOnceAndTheCallSucceeds() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.client.listPolicies();
+            f.client.findRolesByNamePattern(PATTERN, 1000, 10);
             f.mock.revokeTokens();
 
-            assertEquals(7, f.client.listPolicies().size());
+            assertEquals(5, f.client.findRolesByNamePattern(PATTERN, 1000, 10).roles().size());
             assertEquals(2, f.mock.requestCount(MockCyberArkServer.TOKEN));
         }
     }
@@ -132,8 +121,9 @@ class CyberArkClientTest {
     @Test
     void serverErrorIsAnHttpStatusFailure() {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.mock.fail(MockCyberArkServer.POLICIES, Fault.HTTP_500);
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, f.client::listPolicies);
+            f.mock.fail(MockCyberArkServer.REDROCK_ROLE, Fault.HTTP_500);
+            CyberArkApiException e = assertThrows(CyberArkApiException.class,
+                    () -> f.client.findRolesByNamePattern(PATTERN, 1000, 10));
 
             assertEquals(CyberArkApiException.Kind.HTTP_STATUS, e.kind());
             assertEquals(500, e.httpStatus());
@@ -152,17 +142,10 @@ class CyberArkClientTest {
     }
 
     @Test
-    void repeatedNextTokenStopsPaging() {
-        try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.mock.fail(MockCyberArkServer.POLICIES, Fault.REPEAT_NEXT_TOKEN);
-            assertEquals(CyberArkApiException.Kind.PAGINATION, failureKind(f.client::listPolicies));
-        }
-    }
-
-    @Test
     void unreachableServerIsATransportFailure() {
         MockFixture f = MockFixture.start(SampleData.demo());
         f.close();
-        assertEquals(CyberArkApiException.Kind.TRANSPORT, failureKind(f.client::listPolicies));
+        assertEquals(CyberArkApiException.Kind.TRANSPORT,
+                failureKind(() -> f.client.findRolesByNamePattern(PATTERN, 1000, 10)));
     }
 }

@@ -146,7 +146,7 @@ Two officially documented paths exist, with **different response shapes**:
 | `redrock-user-dictionary.official-derived.json` | S4 User table response | **Matches** (Invited / Active rows) |
 | `roles-getrolemembers-nested.official-schema-example.json` | S5 mock `POST /Roles/GetRoleMembers` (2026-10-23) | **Matches byte for byte** |
 | `roles-getrole.official-schema-example.json` | S5 mock `POST /Roles/GetRole` (2026-10-23) | **MISMATCHED**: the fixture has an extra top-level `"Error": {}` that the mock no longer returns. No effect on parsing; the fixture should be refreshed when the code is next changed |
-| `uap-policies-200…`, `uap-error…`, `uap-policies.public-mock…`, `sca-token…` | — | Use Case 2 only; **not re-verified** in this pass |
+| `uap-policies-200…`, `uap-error…`, `uap-policies.public-mock…`, `sca-token…` | — | Use Case 2; used by `OfficialExamplesContractTest` (re-checked against P2/P3 on 2026-10-23) |
 
 Our mock server's own Identity data is fabricated and is not evidence of the contract.
 
@@ -161,14 +161,75 @@ Our mock server's own Identity data is fabricated and is not evidence of the con
 
 ---
 
-## Use Case 2 (Access Control Policies): carried over, not re-verified on 2026-10-23
+## Use Case 2 (policy health): contract re-verified on 2026-10-23
 
-| Item | Value | Source (as of 2026-10-21) |
+Sources (read in the browser on 2026-10-23):
+
+| ID | Source |
+|---|---|
+| S1 | Create an API token (as above), last modified 18.08.2026 |
+| P1 | Secure cloud access-related API authentication: https://docs.cyberark.com/manage/latest/en/content/sca/automation/sca_oauth2-server-setup.htm |
+| P2 | SCA APIs reference, "Generate a public access token" and "Query policies": https://api-docs.cyberark.com/sca-api/docs/secure-cloud-access-apis (last modified 08.06.2026) |
+| P3 | Access Control Policies API reference, "Get policies" and schemas `PolicyStatus`, `CommonAccessPolicy_metadata`: https://api-docs.cyberark.com/uap-schema-api/docs/access-control-policies-api (last modified 06.10.2026) |
+
+### Token
+
+| Item | Contract | Label |
 |---|---|---|
-| Endpoint | `GET https://<subdomain>.uap.cyberark.cloud/api/policies` | S1 (host) + SDK (path) |
-| Paging | `limit`, `nextToken`; repeat until `nextToken` is missing; a repeated token is an error | SDK |
-| Response | `{"results": [...], "nextToken": "...", "total": n}` | SDK |
-| Policy status | `metadata.status{status,statusCode,statusDescription}`; values `Active`, `Suspended`, `Expired`, `Validating`, `Error`, `Warning` | SDK |
-| Token | Cloud-console and group-assignment policies need the **custom OAuth2 token** (`/oauth2/token/{app_id}`), not the platform token | S1 |
+| Which token | S1: "Secure Cloud Access APIs and Access Control Policies APIs (for cloud console and group assignment policies only), use a custom OAuth2 token instead of the platform token". P1: the SCA APIs and the Access Control Policies API for cloud console and group assignment policies "require a custom OAuth2 server" for its custom claims | **VERIFIED** (S1, P1). The service always uses the custom token for the policies |
+| Endpoint | `POST https://{tenant_name}.id.cyberark.cloud/oauth2/token/{app_id}`, `app_id` = the custom OAuth2 server's Application ID | **VERIFIED** (P2) |
+| Request | Security "Basic Auth" (the service user); body `application/json` `{"grant_type": "client_credentials"}` | **VERIFIED** (P2). Note: S2 (Redrock) describes a form body for another OAuth2 app; for this endpoint P2 shows JSON |
+| Response | `access_token`, `token_type`, `expires_in`, `scope` (example: `Bearer`, 900, `full`) | **VERIFIED** (P2, example) |
+| App setup | Client Creds; scope `full` (`/*`) or `sca`; role CS Admin, SCA Admin, SCAApiFullAccess or **SCAApiReadOnly** (read-only); claims script for `tenant_id`, `user_roles`, `user_uuid`, `aud = cyberark.isp.uap`; access token lifetime above 10 minutes | **VERIFIED** (P1) |
+| Token errors | P2 lists a 401; no body shown | **UNRESOLVED** |
 
-These will be re-verified when Use Case 2 starts.
+### Which policy API
+
+| Item | Contract | Label |
+|---|---|---|
+| Access Control Policies ("UAP") | `GET https://{tenant_subdomain}.uap.cyberark.cloud/api/policies`, Bearer auth | **VERIFIED** (P3, S1) |
+| SCA Policies | `GET https://{tenant_name}.sca.cyberark.cloud/api/policies`, Bearer auth | **VERIFIED** (P2) |
+| Which one applies | P3: "If policies are displayed on your tenant in SCA's Policies page, you need to use the SCA Policies API" | **VERIFIED** (P3). Tenant-specific: `CYBERARK_POLICY_API=uap\|sca`, **client confirmation required** |
+
+### UAP `GET /policies`
+
+| Item | Contract | Label |
+|---|---|---|
+| Query | `limit` (0-50, default 10), `nextToken`, `filter`, `q`, `sort` | **VERIFIED** (P3). The service sends `limit` (default 50) and `nextToken` only |
+| Response | `{"results": [object], "nextToken": string, "total": int32}`, all three marked required; `total` = "Total number of access policies" | **VERIFIED** (P3) |
+| Last page | Not described. The service stops when `nextToken` is absent or empty | **UNRESOLVED** |
+| List detail | "The response includes partial details for each policy"; full details need `GET /policies/{policyId}` | **VERIFIED** (P3). The status is in the partial details (`metadata.status`), so no per-policy call is made |
+| Status | `metadata.status.status`, allowed values `Active`, `Suspended`, `Expired`, `Validating`, `Error`, `Warning`; `statusCode` (up to 99 characters), `statusDescription` (up to 1000), `link` | **VERIFIED** (P3, `PolicyStatus`) |
+| Policy fields used | `metadata.policyId` (not marked required), `metadata.name`, `metadata.policyEntitlement.targetCategory` (`Cloud Console`, `VM`, `DB`, `Clusters`), `.locationType` | **VERIFIED** (P3) |
+| `updatedBy` vs `updatedOn` | P3 and the public mock use `updatedBy`; the SDKs use `updatedOn`. Not used by the check; the whole policy is stored as returned | Resolved by storing both if present |
+| `failedServices` | Only in the public SwaggerHub mock example, not in the P3 schema. The service treats a non-empty list as INCOMPLETE | **ASSUMPTION** (fail-closed) |
+
+### SCA `GET /policies`
+
+| Item | Contract | Label |
+|---|---|---|
+| Query | `cloud_provider`, `debug`, `free_text`, `status`; **no paging parameters** | **VERIFIED** (P2) |
+| Response | `{"total": int, "hits": [policy]}`; `total` = "The number of policies that were returned" | **VERIFIED** (P2) |
+| Status | `status` integer: Active = 1, Expired = 3, Error = 4, Warning = 5, Validating = 6 (2 is not documented) | **VERIFIED** (P2) |
+| Error detail | `faultCode` (number), `statusTooltipMessage` ("the error message that correlates with the faultCode") | **VERIFIED** (P2) |
+| Other fields | `policyId`, `name`, `cloudProvider` (AWS = 0, Google Cloud = 1, Azure resource = 2, AWS IAM IDC = 3, Microsoft Entra ID = 4), dates, `accessRules`, `entities` | **VERIFIED** (P2) |
+| More policies than one response | Not described | **UNRESOLVED**: a `total` that doesn't match `hits` makes the run INCOMPLETE |
+
+### Outcome rules (implemented)
+
+| Outcome | UAP | SCA |
+|---|---|---|
+| `FINDING` | status Error or Warning (letter case ignored) | status 4 or 5 |
+| `NO_FINDING` | Active, Suspended, Expired, Validating | 1, 3, 6 |
+| `CANNOT_VERIFY` | status missing, not text, or not a documented value; no `metadata` | status missing, not an integer, or not a documented number |
+
+Run `health`: `FINDINGS` if any finding; `ALL_HEALTHY` only when the retrieval is complete and no policy is
+`CANNOT_VERIFY`; otherwise `UNDETERMINED`. A failed retrieval stores nothing and concludes nothing.
+
+### Client confirmations for Use Case 2
+
+1. `uap` or `sca`: on which page does the tenant show its SCA policies?
+2. The custom OAuth2 server web app: its Application ID, scope (`full` or `sca`), and a read-only role (`SCAApiReadOnly`).
+3. The service user for that app. It may be the Use Case 1 service user.
+4. Whether `total` (UAP) counts every policy the token can see, and how SCA behaves with many policies.
+5. Whether the token can see all policies, or only those of delegated workspaces (an SCA Admin limitation per P1).

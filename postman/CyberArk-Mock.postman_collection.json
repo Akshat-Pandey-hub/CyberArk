@@ -37,13 +37,27 @@
       ],
       "request": {
         "method": "POST",
-        "header": [{ "key": "Accept", "value": "application/json" }],
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
         "body": {
           "mode": "urlencoded",
           "urlencoded": [
-            { "key": "grant_type", "value": "client_credentials" },
-            { "key": "client_id", "value": "{{clientId}}" },
-            { "key": "client_secret", "value": "{{clientSecret}}" }
+            {
+              "key": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "key": "client_id",
+              "value": "{{clientId}}"
+            },
+            {
+              "key": "client_secret",
+              "value": "{{clientSecret}}"
+            }
           ]
         },
         "url": "{{tokenUrl}}",
@@ -73,8 +87,14 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -103,12 +123,27 @@
       ],
       "request": {
         "method": "POST",
-        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
         "url": {
           "raw": "{{identityBaseUrl}}/Roles/GetRole?Name={{roleId}}",
-          "host": ["{{identityBaseUrl}}"],
-          "path": ["Roles", "GetRole"],
-          "query": [{ "key": "Name", "value": "{{roleId}}" }]
+          "host": [
+            "{{identityBaseUrl}}"
+          ],
+          "path": [
+            "Roles",
+            "GetRole"
+          ],
+          "query": [
+            {
+              "key": "Name",
+              "value": "{{roleId}}"
+            }
+          ]
         },
         "description": "Official Roles API reference: query parameter Name = role UUID; Result has Uuid, Name, Description, RoleType, Principals."
       }
@@ -136,15 +171,34 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
-        "body": { "mode": "raw", "raw": "{\"Name\": \"{{roleId}}\"}" },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"Name\": \"{{roleId}}\"}"
+        },
         "url": {
           "raw": "{{identityBaseUrl}}/Roles/GetRoleMembers?name={{roleId}}",
-          "host": ["{{identityBaseUrl}}"],
-          "path": ["Roles", "GetRoleMembers"],
-          "query": [{ "key": "name", "value": "{{roleId}}" }]
+          "host": [
+            "{{identityBaseUrl}}"
+          ],
+          "path": [
+            "Roles",
+            "GetRoleMembers"
+          ],
+          "query": [
+            {
+              "key": "name",
+              "value": "{{roleId}}"
+            }
+          ]
         },
         "description": "Official reference: query parameter name = role UUID. The SDK sends {\"Name\": ...} in the body; both are sent. Row Guid/Name/Type verified in the SDK."
       }
@@ -171,8 +225,14 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{accessToken}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -183,7 +243,58 @@
       }
     },
     {
-      "name": "5. List policies (first page)",
+      "name": "5. Policy token (custom OAuth2, /oauth2/token/{app_id})",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('has access_token', () => pm.expect(body.access_token).to.be.a('string').and.not.empty);",
+              "pm.collectionVariables.set('policyAccessToken', body.access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{clientId}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{clientSecret}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"grant_type\": \"client_credentials\"}"
+        },
+        "url": "{{policyTokenUrl}}",
+        "description": "SCA API reference 'Generate a public access token': Basic auth with the service user, JSON body. The policy APIs need this token, not the platform token."
+      }
+    },
+    {
+      "name": "6. List policies (first page)",
       "event": [
         {
           "listen": "test",
@@ -204,18 +315,32 @@
       ],
       "request": {
         "method": "GET",
-        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{policyAccessToken}}"
+          }
+        ],
         "url": {
           "raw": "{{uapBaseUrl}}/policies?limit=50",
-          "host": ["{{uapBaseUrl}}"],
-          "path": ["policies"],
-          "query": [{ "key": "limit", "value": "50" }]
+          "host": [
+            "{{uapBaseUrl}}"
+          ],
+          "path": [
+            "policies"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "50"
+            }
+          ]
         },
-        "description": "Base URL from the official docs; path, paging and fields from the SDK."
+        "description": "Access Control Policies API, GET /policies (limit up to 50, nextToken, total). Custom OAuth2 token."
       }
     },
     {
-      "name": "6. List policies (next page)",
+      "name": "7. List policies (next page)",
       "event": [
         {
           "listen": "prerequest",
@@ -242,23 +367,50 @@
       ],
       "request": {
         "method": "GET",
-        "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{policyAccessToken}}"
+          }
+        ],
         "url": {
           "raw": "{{uapBaseUrl}}/policies?limit=50&nextToken={{nextToken}}",
-          "host": ["{{uapBaseUrl}}"],
-          "path": ["policies"],
+          "host": [
+            "{{uapBaseUrl}}"
+          ],
+          "path": [
+            "policies"
+          ],
           "query": [
-            { "key": "limit", "value": "50" },
-            { "key": "nextToken", "value": "{{nextToken}}" }
+            {
+              "key": "limit",
+              "value": "50"
+            },
+            {
+              "key": "nextToken",
+              "value": "{{nextToken}}"
+            }
           ]
         }
       }
     }
   ],
   "variable": [
-    { "key": "accessToken", "value": "" },
-    { "key": "roleId", "value": "" },
-    { "key": "userId", "value": "" },
-    { "key": "nextToken", "value": "" }
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "roleId",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "nextToken",
+      "value": ""
+    }
   ]
 }

@@ -8,7 +8,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,7 +16,6 @@ class CyberArkConfigTest {
     private static Map<String, String> validEnv() {
         Map<String, String> env = new HashMap<>();
         env.put(CyberArkConfig.ENV_IDENTITY_BASE_URL, "https://tenant.id.cyberark.cloud/");
-        env.put(CyberArkConfig.ENV_UAP_BASE_URL, "https://sub.uap.cyberark.cloud/api");
         env.put(CyberArkConfig.ENV_CLIENT_ID, "svc-user");
         env.put(CyberArkConfig.ENV_CLIENT_SECRET, "s3cret-value");
         return env;
@@ -29,7 +27,6 @@ class CyberArkConfigTest {
 
         assertEquals("https://tenant.id.cyberark.cloud", config.identityBaseUrl().toString());
         assertEquals("https://tenant.id.cyberark.cloud/oauth2/platformtoken", config.tokenUrl().toString());
-        assertEquals("https://sub.uap.cyberark.cloud/api", config.uapBaseUrl().toString());
         assertEquals(CyberArkConfig.DEFAULT_TIMEOUT, config.requestTimeout());
     }
 
@@ -65,18 +62,6 @@ class CyberArkConfigTest {
     }
 
     @Test
-    void theUapUrlIsOnlyNeededForThePolicies() {
-        Map<String, String> env = validEnv();
-        env.remove(CyberArkConfig.ENV_UAP_BASE_URL);
-        CyberArkConfig config = CyberArkConfig.fromEnvironment(env);
-
-        assertNull(config.uapBaseUrl(), "use case 1 (Identity only) runs without it");
-        ConfigException e = assertThrows(ConfigException.class,
-                () -> new com.keyforge.cyberarkpoc.client.CyberArkClient(config).listPolicies());
-        assertTrue(e.getMessage().contains(CyberArkConfig.ENV_UAP_BASE_URL));
-    }
-
-    @Test
     void theRoleMembersApiIsSelectable() {
         assertEquals(CyberArkConfig.RoleMembersApi.ROLES, CyberArkConfig.roleMembersApi(Map.of()));
         assertEquals(CyberArkConfig.RoleMembersApi.SAASMANAGE,
@@ -88,12 +73,12 @@ class CyberArkConfigTest {
     @Test
     void plainHttpIsOnlyAllowedForLocalhost() {
         Map<String, String> remote = validEnv();
-        remote.put(CyberArkConfig.ENV_UAP_BASE_URL, "http://sub.uap.cyberark.cloud/api");
+        remote.put(CyberArkConfig.ENV_IDENTITY_BASE_URL, "http://tenant.id.cyberark.cloud");
         assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(remote));
 
         Map<String, String> local = validEnv();
-        local.put(CyberArkConfig.ENV_UAP_BASE_URL, "http://127.0.0.1:8300/api");
-        assertEquals("http://127.0.0.1:8300/api", CyberArkConfig.fromEnvironment(local).uapBaseUrl().toString());
+        local.put(CyberArkConfig.ENV_IDENTITY_BASE_URL, "http://127.0.0.1:8300/api");
+        assertEquals("http://127.0.0.1:8300/api", CyberArkConfig.fromEnvironment(local).identityBaseUrl().toString());
     }
 
     @Test

@@ -123,7 +123,7 @@ public final class SampleData {
                         + "\"platformType\": \"Unix\", \"privileged\": true, \"privilegedCriteria\": \"uid 0\", "
                         + "\"platformTypeAccountProperties\": {\"uid\": 0, \"gid\": 0}}");
 
-        // Policies: 7 across 3 pages, one of each status plus a second Error.
+        // Policies: 8 across 3 pages: one of each documented status, a second Error, and one undocumented status.
         data.policyPageSize(3)
                 .policy("pol-001", "MOCK-Finance-AWS-ReadOnly", "Active", null, null)
                 .policy("pol-002", "MOCK-HR-AWS-Admin", "Error", "MOCK_TARGET_UNREACHABLE",
@@ -134,7 +134,8 @@ public final class SampleData {
                 .policy("pol-005", "MOCK-Legacy-AWS-Admin", "Expired", null, null)
                 .policy("pol-006", "MOCK-Ops-AWS-Admin", "Validating", null, null)
                 .policy("pol-007", "MOCK-Ops-AWS-Billing", "Error", "MOCK_ROLE_MISSING",
-                        "MOCK: the target IAM role no longer exists");
+                        "MOCK: the target IAM role no longer exists")
+                .policy("pol-008", "MOCK-Sandbox-AWS-Dev", "Disabled", null, null);
         return data;
     }
 }

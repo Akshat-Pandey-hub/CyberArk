@@ -409,7 +409,7 @@ public final class MockDataset {
     }
 
     public MockDataset policy(String policyId, String name, String status, String statusCode, String statusDescription) {
-        policies.add(new PolicyRow(policyId, name, status, statusCode, statusDescription, "Cloud console", "AWS"));
+        policies.add(new PolicyRow(policyId, name, status, statusCode, statusDescription, "Cloud Console", "AWS"));
         return this;
     }
 

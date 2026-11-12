@@ -2,11 +2,9 @@ package com.keyforge.cyberarkpoc.client;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.keyforge.cyberarkpoc.config.ConfigException;
 import com.keyforge.cyberarkpoc.config.CyberArkConfig;
 import com.keyforge.cyberarkpoc.config.CyberArkConfig.RoleMembersApi;
 import com.keyforge.cyberarkpoc.model.CyberArkUser;
-import com.keyforge.cyberarkpoc.model.Policy;
 import com.keyforge.cyberarkpoc.model.Role;
 import com.keyforge.cyberarkpoc.model.RoleDetails;
 
@@ -19,15 +17,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
- * Read-only client for the CyberArk calls the two use cases need. Endpoint paths and response
+ * Read-only client for the Identity calls Use Case 1 needs (the policies of Use Case 2: {@link PolicyClient}). Endpoint paths and response
  * fields follow docs/API_CONTRACT.md, where each one is marked verified or assumed.
  *
  * <p>Every failure is thrown as {@link CyberArkApiException}; nothing is swallowed, so a caller can
@@ -39,9 +35,6 @@ public final class CyberArkClient {
     public static final String GET_ROLE_PATH = "/Roles/GetRole";
     public static final String GET_ROLE_MEMBERS_PATH = "/Roles/GetRoleMembers";
     public static final String SAASMANAGE_ROLE_MEMBERS_PATH = "/SaasManage/GetRoleMembers";
-    public static final String POLICIES_PATH = "/policies";
-    /** The SDK's default page size for policies. */
-    public static final int POLICY_PAGE_LIMIT = 50;
     /** Columns of the official Role data dictionary. */
     static final String ROLE_COLUMNS = "ID, Name, RoleType, ReadOnly, Description";
 
@@ -200,29 +193,6 @@ public final class CyberArkClient {
                     users.size() + " users share the id " + userId);
         }
         return users.stream().findFirst();
-    }
-
-    /** Every policy, following {@code nextToken} until the last page. */
-    public List<Policy> listPolicies() {
-        if (config.uapBaseUrl() == null) {
-            throw new ConfigException(CyberArkConfig.ENV_UAP_BASE_URL + " is required for the policies");
-        }
-        List<Policy> all = new ArrayList<>();
-        Set<String> seenTokens = new HashSet<>();
-        String nextToken = null;
-        do {
-            String query = "?limit=" + POLICY_PAGE_LIMIT + (nextToken == null ? "" : "&nextToken=" + urlEncode(nextToken));
-            URI uri = URI.create(config.uapBaseUrl() + POLICIES_PATH + query);
-            JsonNode root = sendJson("policies", authorized(uri).GET());
-            PolicyResponses.Page page = PolicyResponses.page("policies", root);
-            all.addAll(page.policies());
-            nextToken = page.nextToken();
-            if (nextToken != null && !seenTokens.add(nextToken)) {
-                throw new CyberArkApiException(CyberArkApiException.Kind.PAGINATION, "policies", 200,
-                        "nextToken repeated; stopping to avoid an endless loop");
-            }
-        } while (nextToken != null);
-        return all;
     }
 
     /**

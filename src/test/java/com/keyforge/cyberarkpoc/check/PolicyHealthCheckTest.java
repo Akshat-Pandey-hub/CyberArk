@@ -1,126 +1,126 @@
 package com.keyforge.cyberarkpoc.check;
 
-import com.keyforge.cyberarkpoc.MockFixture;
-import com.keyforge.cyberarkpoc.check.PolicyHealthCheck.PolicyHealthReport;
-import com.keyforge.cyberarkpoc.client.CyberArkApiException;
-import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
-import com.keyforge.cyberarkpoc.mock.MockCyberArkServer.Fault;
-import com.keyforge.cyberarkpoc.mock.MockDataset;
-import com.keyforge.cyberarkpoc.mock.SampleData;
-import com.keyforge.cyberarkpoc.model.Policy;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.keyforge.cyberarkpoc.check.PolicyHealthCheck.Outcome;
+import com.keyforge.cyberarkpoc.check.PolicyHealthCheck.PolicyResult;
+import com.keyforge.cyberarkpoc.config.PolicyConfig.Api;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Use case 2 on FABRICATED data served by the mock. */
+/** The per-policy outcome rules on hand-written FABRICATED policies (no HTTP). */
 class PolicyHealthCheckTest {
 
-    private static List<String> ids(List<Policy> policies) {
-        return policies.stream().map(Policy::policyId).toList();
-    }
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @Test
-    void errorAndWarningPoliciesAreFlagged() {
-        try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            PolicyHealthReport report = new PolicyHealthCheck(f.client).run();
-
-            assertEquals(7, report.totalPolicies());
-            assertEquals(List.of("pol-002", "pol-003", "pol-007"), ids(report.flagged()));
-            assertTrue(report.unrecognisedStatus().isEmpty());
-            assertEquals("MOCK_TARGET_UNREACHABLE", report.flagged().get(0).statusCode());
+    private static JsonNode json(String text) {
+        try {
+            return MAPPER.readTree(text);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(e);
         }
     }
 
-    @Test
-    void statusCasingDoesNotMatter() {
-        MockDataset data = new MockDataset()
-                .policy("p1", "P1", "ERROR", null, null)
-                .policy("p2", "P2", "warning", null, null)
-                .policy("p3", "P3", "ACTIVE", null, null);
-        try (MockFixture f = MockFixture.start(data)) {
-            assertEquals(List.of("p1", "p2"), ids(new PolicyHealthCheck(f.client).run().flagged()));
-        }
+    /** A UAP policy with {@code statusJson} as the value of {@code metadata.status.status}. */
+    private static PolicyResult uap(String statusJson) {
+        return PolicyHealthCheck.evaluate(Api.UAP, json("""
+                {"metadata": {"policyId": "p1", "name": "P1",
+                  "status": {"status": %s, "statusCode": "C1", "statusDescription": "D1"},
+                  "policyEntitlement": {"targetCategory": "Cloud Console", "locationType": "AWS"}}}"""
+                .formatted(statusJson)));
+    }
+
+    private static PolicyResult sca(String statusJson) {
+        return PolicyHealthCheck.evaluate(Api.SCA, json("""
+                {"policyId": "aws_1", "name": "S1", "status": %s, "cloudProvider": 0,
+                 "faultCode": 1001, "statusTooltipMessage": "role missing"}""".formatted(statusJson)));
     }
 
     @Test
-    void healthyPoliciesProduceNoFindings() {
-        MockDataset data = new MockDataset()
-                .policy("p1", "P1", "Active", null, null)
-                .policy("p2", "P2", "Suspended", null, null)
-                .policy("p3", "P3", "Expired", null, null)
-                .policy("p4", "P4", "Validating", null, null);
-        try (MockFixture f = MockFixture.start(data)) {
-            PolicyHealthReport report = new PolicyHealthCheck(f.client).run();
-
-            assertEquals(4, report.totalPolicies());
-            assertTrue(report.flagged().isEmpty());
-            assertTrue(report.unrecognisedStatus().isEmpty());
-        }
-    }
-
-    @Test
-    void emptyPolicyListIsReportedAsSuch() {
-        try (MockFixture f = MockFixture.start(new MockDataset())) {
-            PolicyHealthReport report = new PolicyHealthCheck(f.client).run();
-
-            assertTrue(report.noPolicies());
-            assertTrue(report.flagged().isEmpty());
+    void uapErrorAndWarningAreFindingsWithTheirCodeAndDescription() {
+        for (String status : new String[] {"Error", "Warning"}) {
+            PolicyResult r = uap("\"" + status + "\"");
+            assertEquals(Outcome.FINDING, r.outcome(), status);
+            assertEquals(status, r.status());
+            assertEquals("C1", r.statusCode());
+            assertEquals("D1", r.statusDescription());
+            assertEquals("status " + status + ": C1 - D1", r.reason());
+            assertEquals("p1", r.policyId());
+            assertEquals("Cloud Console", r.targetCategory());
+            assertEquals("AWS", r.locationType());
         }
     }
 
     @Test
-    void unexpectedOrMissingStatusIsReportedSeparately() {
-        MockDataset data = new MockDataset()
-                .policy("p1", "P1", "Broken", null, null)
-                .policy("p2", "P2", null, null, null)
-                .policy("p3", "P3", "Error", null, null);
-        try (MockFixture f = MockFixture.start(data)) {
-            PolicyHealthReport report = new PolicyHealthCheck(f.client).run();
-
-            assertEquals(List.of("p3"), ids(report.flagged()));
-            assertEquals(List.of("p1", "p2"), ids(report.unrecognisedStatus()));
+    void uapOtherDocumentedStatusesAreNoFinding() {
+        for (String status : new String[] {"Active", "Suspended", "Expired", "Validating"}) {
+            assertEquals(Outcome.NO_FINDING, uap("\"" + status + "\"").outcome(), status);
         }
     }
 
     @Test
-    void flaggedPolicyOnALaterPageIsFound() {
-        MockDataset data = new MockDataset().policyPageSize(1)
-                .policy("p1", "P1", "Active", null, null)
-                .policy("p2", "P2", "Active", null, null)
-                .policy("p3", "P3", "Warning", null, null);
-        try (MockFixture f = MockFixture.start(data)) {
-            assertEquals(List.of("p3"), ids(new PolicyHealthCheck(f.client).run().flagged()));
-            assertEquals(3, f.mock.requestCount(MockCyberArkServer.POLICIES));
+    void uapStatusIsComparedIgnoringCaseAndShownAsDocumented() {
+        PolicyResult r = uap("\"error\"");
+        assertEquals(Outcome.FINDING, r.outcome());
+        assertEquals("Error", r.status());
+    }
+
+    @Test
+    void uapMissingOrUndocumentedStatusCannotBeVerified() {
+        assertEquals(Outcome.CANNOT_VERIFY, uap("null").outcome());
+        assertEquals(Outcome.CANNOT_VERIFY, uap("\"\"").outcome());
+        PolicyResult undocumented = uap("\"Disabled\"");
+        assertEquals(Outcome.CANNOT_VERIFY, undocumented.outcome());
+        assertEquals("undocumented status 'Disabled'", undocumented.reason());
+        assertEquals(Outcome.CANNOT_VERIFY, uap("4").outcome(), "a number is not a documented UAP status");
+
+        PolicyResult noStatusObject = PolicyHealthCheck.evaluate(Api.UAP,
+                json("{\"metadata\": {\"policyId\": \"p2\", \"name\": \"P2\"}}"));
+        assertEquals(Outcome.CANNOT_VERIFY, noStatusObject.outcome());
+        assertEquals("p2", noStatusObject.policyId());
+
+        PolicyResult noMetadata = PolicyHealthCheck.evaluate(Api.UAP, json("{}"));
+        assertEquals(Outcome.CANNOT_VERIFY, noMetadata.outcome());
+        assertNull(noMetadata.policyId());
+    }
+
+    @Test
+    void aFindingWithoutDetailSaysSo() {
+        PolicyResult r = PolicyHealthCheck.evaluate(Api.UAP,
+                json("{\"metadata\": {\"policyId\": \"p1\", \"status\": {\"status\": \"Warning\"}}}"));
+        assertEquals(Outcome.FINDING, r.outcome());
+        assertTrue(r.reason().contains("no status code or description"), r.reason());
+    }
+
+    @Test
+    void scaErrorAndWarningNumbersAreFindingsWithFaultCodeAndTooltip() {
+        PolicyResult error = sca("4");
+        assertEquals(Outcome.FINDING, error.outcome());
+        assertEquals("Error (4)", error.status());
+        assertEquals("1001", error.statusCode());
+        assertEquals("role missing", error.statusDescription());
+        assertEquals("AWS", error.locationType());
+        assertEquals("aws_1", error.policyId());
+        assertEquals(Outcome.FINDING, sca("5").outcome());
+        assertEquals("Warning (5)", sca("5").status());
+    }
+
+    @Test
+    void scaOtherDocumentedNumbersAreNoFinding() {
+        for (String status : new String[] {"1", "3", "6"}) {
+            assertEquals(Outcome.NO_FINDING, sca(status).outcome(), status);
         }
     }
 
     @Test
-    void failedRequestFailsTheCheck() {
-        try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.mock.fail(MockCyberArkServer.POLICIES, Fault.HTTP_500);
-            assertThrows(CyberArkApiException.class, () -> new PolicyHealthCheck(f.client).run());
-
-            f.mock.fail(MockCyberArkServer.POLICIES, Fault.MALFORMED_JSON);
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, () -> new PolicyHealthCheck(f.client).run());
-            assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, e.kind());
-        }
-    }
-
-    @Test
-    void failedLoginFailsTheCheck() {
-        try (MockFixture f = MockFixture.start(SampleData.demo())) {
-            f.mock.fail(MockCyberArkServer.TOKEN, Fault.HTTP_500);
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, () -> new PolicyHealthCheck(f.client).run());
-            assertEquals(CyberArkApiException.Kind.HTTP_STATUS, e.kind());
-            assertEquals(0, f.mock.requestCount(MockCyberArkServer.POLICIES), "no API call without a token");
-        }
-        try (MockFixture f = MockFixture.startWithSecret(SampleData.demo(), "wrong-secret")) {
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, () -> new PolicyHealthCheck(f.client).run());
-            assertEquals(CyberArkApiException.Kind.AUTHENTICATION, e.kind());
-        }
+    void scaMissingOrUndocumentedStatusCannotBeVerified() {
+        assertEquals(Outcome.CANNOT_VERIFY, sca("null").outcome());
+        assertEquals(Outcome.CANNOT_VERIFY, sca("2").outcome(), "2 is not documented");
+        assertEquals(Outcome.CANNOT_VERIFY, sca("99").outcome());
+        assertEquals(Outcome.CANNOT_VERIFY, sca("\"4\"").outcome(), "the documented type is integer");
+        assertEquals(Outcome.CANNOT_VERIFY, PolicyHealthCheck.evaluate(Api.SCA, json("{\"policyId\": \"x\"}")).outcome());
     }
 }

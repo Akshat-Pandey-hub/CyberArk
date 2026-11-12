@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,42 +88,5 @@ class ResponseParsingTest {
     void notJsonIsInvalid() {
         assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, kindOf(() -> Json.parse("test", 200, "<html>")));
         assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, kindOf(() -> Json.parse("test", 200, "")));
-    }
-
-    @Test
-    void policyPageIsRead() {
-        PolicyResponses.Page page = PolicyResponses.page("test", json("""
-                {"results": [{"metadata": {"policyId": "p1", "name": "P1",
-                   "status": {"status": "Error", "statusCode": "C1", "statusDescription": "D1"},
-                   "policyEntitlement": {"targetCategory": "Cloud console", "locationType": "AWS", "policyType": "Recurring"},
-                   "updatedOn": {"user": "u@example.test", "time": "2026-01-01T00:00:00"}}}],
-                 "nextToken": "abc", "total": 1}"""));
-
-        assertEquals("abc", page.nextToken());
-        assertEquals("Error", page.policies().get(0).status());
-        assertEquals("C1", page.policies().get(0).statusCode());
-        assertEquals("AWS", page.policies().get(0).locationType());
-        assertEquals("u@example.test", page.policies().get(0).updatedBy());
-    }
-
-    @Test
-    void blankNextTokenEndsPaging() {
-        assertNull(PolicyResponses.page("test", json("{\"results\": [], \"nextToken\": \"\"}")).nextToken());
-        assertNull(PolicyResponses.page("test", json("{\"results\": []}")).nextToken());
-    }
-
-    @Test
-    void brokenPolicyPagesAreInvalid() {
-        assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE,
-                kindOf(() -> PolicyResponses.page("test", json("{\"policies\": []}"))));
-        assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE,
-                kindOf(() -> PolicyResponses.page("test", json("{\"results\": [{\"name\": \"no metadata\"}]}"))));
-    }
-
-    @Test
-    void policyWithoutStatusHasNullStatus() {
-        PolicyResponses.Page page = PolicyResponses.page("test",
-                json("{\"results\": [{\"metadata\": {\"policyId\": \"p1\", \"name\": \"P1\"}}]}"));
-        assertNull(page.policies().get(0).status());
     }
 }

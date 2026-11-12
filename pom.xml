@@ -70,6 +70,30 @@
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.6.0</version>
                 <executions>
+                    <!-- The deliverable for the client's server: everything except the test mock. -->
+                    <execution>
+                        <id>deliverable-without-mock</id>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <outputFile>${project.build.directory}/cyberark-extract.jar</outputFile>
+                            <filters>
+                                <filter>
+                                    <artifact>com.keyforge:cyberark-integration-poc</artifact>
+                                    <excludes>
+                                        <exclude>com/keyforge/cyberarkpoc/mock/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.keyforge.cyberarkpoc.Main</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                    <!-- The development jar (includes the mock), used for local testing. -->
                     <execution>
                         <phase>package</phase>
                         <goals><goal>shade</goal></goals>

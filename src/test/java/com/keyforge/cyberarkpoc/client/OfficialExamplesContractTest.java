@@ -2,9 +2,10 @@ package com.keyforge.cyberarkpoc.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.keyforge.cyberarkpoc.StubHttpServer;
+import com.keyforge.cyberarkpoc.check.PolicyHealthCheck;
 import com.keyforge.cyberarkpoc.config.CyberArkConfig;
+import com.keyforge.cyberarkpoc.config.PolicyConfig;
 import com.keyforge.cyberarkpoc.model.CyberArkUser;
-import com.keyforge.cyberarkpoc.model.Policy;
 import com.keyforge.cyberarkpoc.model.Role;
 import com.keyforge.cyberarkpoc.model.RoleDetails;
 import com.keyforge.cyberarkpoc.model.RoleMember;
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -48,7 +50,7 @@ class OfficialExamplesContractTest {
     }
 
     private static CyberArkConfig stubConfig(String rootUrl) {
-        return new CyberArkConfig(URI.create(rootUrl + "/api"), URI.create(rootUrl + "/api"),
+        return new CyberArkConfig(URI.create(rootUrl + "/api"),
                 URI.create(rootUrl + "/oauth2/platformtoken"), "client", "secret", Duration.ofSeconds(5));
     }
 
@@ -140,44 +142,58 @@ class OfficialExamplesContractTest {
         assertEquals(List.of("Invited", "Active"), users.stream().map(CyberArkUser::statusEnum).toList());
     }
 
-    // ---- Policies -------------------------------------------------------------------------
+    // ---- Policies (Use Case 2) --------------------------------------------------------------
 
-    @Test
-    void policyPageFromPublicMock() {
-        PolicyResponses.Page page = PolicyResponses.page("test", json("uap-policies.public-mock.json"));
-
-        assertEquals(1, page.policies().size());
-        Policy policy = page.policies().get(0);
-        assertEquals("5af2ccfe-98dd-42ad-aa5d-21ffdee1c2ed", policy.policyId());
-        assertEquals("My-Policy-All_DBs", policy.name());
-        assertEquals("Active", policy.status());
-        assertEquals("200", policy.statusCode());
-        assertEquals("All good", policy.statusDescription());
-        assertEquals("DB", policy.targetCategory());
-        assertEquals("FQDN/IP", policy.locationType());
-        assertEquals("Recurring", policy.policyType());
-        assertEquals("DS1_10;DS2_20", page.nextToken());
-        // updatedBy is not asserted: mapping it is change A3, which is deferred.
+    private static PolicyClient stubPolicyClient(String rootUrl) {
+        return new PolicyClient(new PolicyConfig(PolicyConfig.Api.UAP, URI.create(rootUrl + "/api"),
+                URI.create(rootUrl + "/oauth2/token/app"), "client", "secret", 50, 10, Duration.ofSeconds(5)));
     }
 
     @Test
-    void schemaExampleWithAnEmptyPolicyObjectIsRejected() {
-        CyberArkApiException e = assertThrows(CyberArkApiException.class,
-                () -> PolicyResponses.page("test", json("uap-policies-200.official-schema-example.json")));
+    void publicMockPolicyIsReadWithItsDocumentedStatus() {
+        try (StubHttpServer stub = new StubHttpServer()
+                .reply("/oauth2/token/app", 200, fixture("sca-token.official-schema-example.json"))
+                .reply("/api/policies", 200, fixture("uap-policies.public-mock.json"))) {
+            PolicyClient.Listing listing = stubPolicyClient(stub.rootUrl()).listPolicies();
+            PolicyHealthCheck.PolicyResult r = PolicyHealthCheck.evaluate(PolicyConfig.Api.UAP,
+                    listing.policies().get(0));
 
-        assertEquals(CyberArkApiException.Kind.INVALID_RESPONSE, e.kind());
+            assertEquals("5af2ccfe-98dd-42ad-aa5d-21ffdee1c2ed", r.policyId());
+            assertEquals("My-Policy-All_DBs", r.name());
+            assertEquals("Active", r.status());
+            assertEquals("200", r.statusCode());
+            assertEquals("All good", r.statusDescription());
+            assertEquals("DB", r.targetCategory());
+            assertEquals("FQDN/IP", r.locationType());
+            assertEquals(PolicyHealthCheck.Outcome.NO_FINDING, r.outcome());
+            // The public mock's nextToken "DS1_10;DS2_20" is repeated by the stub, and its total 42 does not match.
+            assertFalse(listing.complete());
+            assertEquals(42, listing.reportedTotal());
+        }
     }
 
-    // ---- Over HTTP: UAP error body and token response --------------------------------------
+    @Test
+    void schemaExampleWithAnEmptyPolicyObjectCannotBeVerified() {
+        try (StubHttpServer stub = new StubHttpServer()
+                .reply("/oauth2/token/app", 200, fixture("sca-token.official-schema-example.json"))
+                .reply("/api/policies", 200, fixture("uap-policies-200.official-schema-example.json"))) {
+            PolicyClient.Listing listing = stubPolicyClient(stub.rootUrl()).listPolicies();
+
+            assertEquals(PolicyHealthCheck.Outcome.CANNOT_VERIFY,
+                    PolicyHealthCheck.evaluate(PolicyConfig.Api.UAP, listing.policies().get(0)).outcome());
+            assertFalse(listing.complete(), "total 0 but one policy received");
+        }
+    }
+
+    // ---- Over HTTP: UAP error body and the custom OAuth2 token --------------------------------
 
     @Test
     void uapErrorBodyFromOfficialExampleIsAnHttpStatusFailure() {
         try (StubHttpServer stub = new StubHttpServer()
-                .reply("/oauth2/platformtoken", 200, fixture("sca-token.official-schema-example.json"))
+                .reply("/oauth2/token/app", 200, fixture("sca-token.official-schema-example.json"))
                 .reply("/api/policies", 400, fixture("uap-error.official-schema-example.json"))) {
-            CyberArkClient client = new CyberArkClient(stubConfig(stub.rootUrl()));
-
-            CyberArkApiException e = assertThrows(CyberArkApiException.class, client::listPolicies);
+            CyberArkApiException e = assertThrows(CyberArkApiException.class,
+                    stubPolicyClient(stub.rootUrl())::listPolicies);
 
             assertEquals(CyberArkApiException.Kind.HTTP_STATUS, e.kind());
             assertEquals(400, e.httpStatus());
@@ -186,15 +202,17 @@ class OfficialExamplesContractTest {
     }
 
     @Test
-    void tokenFromOfficialScaTokenExampleIsUsedAsBearer() {
-        // The policies body is fabricated (empty last page); only the token body is official.
+    void customTokenFromOfficialExampleIsRequestedWithBasicAuthAndUsedAsBearer() {
+        // The policies body is fabricated (empty, complete); only the token body is official.
         try (StubHttpServer stub = new StubHttpServer()
-                .reply("/oauth2/platformtoken", 200, fixture("sca-token.official-schema-example.json"))
-                .reply("/api/policies", 200, "{\"results\": [], \"total\": 0}")) {
-            CyberArkClient client = new CyberArkClient(stubConfig(stub.rootUrl()));
+                .reply("/oauth2/token/app", 200, fixture("sca-token.official-schema-example.json"))
+                .reply("/api/policies", 200, "{\"results\": [], \"nextToken\": \"\", \"total\": 0}")) {
+            PolicyClient.Listing listing = stubPolicyClient(stub.rootUrl()).listPolicies();
 
-            assertTrue(client.listPolicies().isEmpty());
-            assertEquals(List.of("Bearer ***ACCESS TOKEN HERE***"), stub.authorizationHeaders());
+            assertTrue(listing.policies().isEmpty());
+            assertTrue(listing.complete());
+            String basic = java.util.Base64.getEncoder().encodeToString("client:secret".getBytes(StandardCharsets.UTF_8));
+            assertEquals(List.of("Basic " + basic, "Bearer ***ACCESS TOKEN HERE***"), stub.authorizationHeaders());
         }
     }
 }

@@ -106,6 +106,15 @@ PostgreSQL integration tests run only when `CYBERARK_IT_PG_HOST`, `CYBERARK_IT_P
 database (each test uses its own throwaway schema and drops it afterwards). Without them they are reported
 as skipped.
 
+## Handover package (for the client's server)
+
+The `deploy/` folder plus `target/cyberark-extract.jar`:
+- `cyberark-extract.jar` is built by `mvn package` **without the test mock**. `target/cyberark-poc.jar` is the
+  development build that includes the mock.
+- `deploy/` holds the settings template, the Linux run script, the Postman collection and
+  [deploy/HANDOVER.md](deploy/HANDOVER.md). The guide covers install, certificate trust, the first run, the
+  permissions to request and troubleshooting.
+
 ## Requirements
 
 Java 17 and Maven 3.9. On this machine the JDK needs
@@ -139,12 +148,14 @@ Mock-only credentials: `client_id=mock-client`, `client_secret=mock-secret`.
 | Role details | `POST /api/Roles/GetRole?Name=<roleId>` |
 | Role members | `POST /api/Roles/GetRoleMembers?name=<roleId>` (body `{"Name": "<roleId>"}` also accepted) |
 | User lookup | `POST /api/Redrock/query` with `... FROM User WHERE ID='...'` |
-| Policies | `GET /api/policies?limit=50&nextToken=<token>` |
+| Policy token (custom OAuth2) | `POST /oauth2/token/mock-policy-app` (Basic auth `mock-client:mock-secret`, JSON `{"grant_type": "client_credentials"}`) |
+| Policies (Access Control Policies, "uap") | `GET /api/policies?limit=50&nextToken=<token>` (custom token only) |
+| Policies (SCA Policies API, "sca") | `GET /sca/api/policies` (custom token only) |
 
 The demo data covers: a sufficient role, a role with a user whose status is missing, a role
 with a suspended user, a role with a group member, a role filled up by a nested role (which
-also contains a member with no user row), a non-matching Azure role, and 7 policies over 3
-pages (Active, Error, Warning, Suspended, Expired, Validating, Error).
+also contains a member with no user row), a non-matching Azure role, and 8 policies over 3
+pages (Active, Error, Warning, Suspended, Expired, Validating, Error, and the undocumented status "Disabled").
 
 ## Run the checks against the mock
 
@@ -152,20 +163,18 @@ With the mock running, in a second terminal (PowerShell):
 
 ```powershell
 $env:CYBERARK_IDENTITY_BASE_URL="http://127.0.0.1:8300/api"
-$env:CYBERARK_UAP_BASE_URL="http://127.0.0.1:8300/api"
 $env:CYBERARK_TOKEN_URL="http://127.0.0.1:8300/oauth2/platformtoken"
 $env:CYBERARK_CLIENT_ID="mock-client"
 $env:CYBERARK_CLIENT_SECRET="mock-secret"
 java -Djdk.net.unixdomain.tmpdir=D:/cyberark-integration-poc/target -jar target/cyberark-poc.jar check
 ```
 
-Exit codes: `0` checks completed (findings may exist), `1` a CyberArk call failed, `2` bad
-configuration. The report goes to the console only.
+`check` prints Use Case 1 as a text report. Exit codes: `0` completed (findings may exist), `1` a CyberArk call
+failed, `2` bad configuration. The report goes to the console only. Use Case 2 runs as `ispss-policy-health` (below).
 
 | Variable | Meaning |
 |---|---|
 | `CYBERARK_IDENTITY_BASE_URL` | Base for Redrock and Roles calls. The client mail uses `https://<sub>.uap.cyberark.cloud/api`; the SDK uses `https://<tenant>.id.cyberark.cloud`. |
-| `CYBERARK_UAP_BASE_URL` | Base for policies, e.g. `https://<sub>.uap.cyberark.cloud/api` |
 | `CYBERARK_TOKEN_URL` | Optional. Defaults to `<identity base>/oauth2/platformtoken` |
 | `CYBERARK_CLIENT_ID`, `CYBERARK_CLIENT_SECRET` | Service user credentials (never printed) |
 | `CYBERARK_TIMEOUT_SECONDS` | Optional, default 30 |
@@ -181,8 +190,8 @@ postman collection run postman/CyberArk-Mock.postman_collection.json -e postman/
 ```
 
 Or import both files into the Postman app. The collection logs in, finds the approver
-roles, reads the first role's details and members, looks up a user member, and reads the
-policies page by page. For a real tenant later, make a copy of the environment with the
+roles, reads the first role's details and members, looks up a user member, gets the custom
+OAuth2 policy token, and reads the policies page by page. For a real tenant later, make a copy of the environment with the
 real URLs and credentials. Don't commit real credentials.
 
 ## Use case 1: approver group validation (`ispss-approver-groups`)
@@ -231,3 +240,43 @@ or short result is never proof that a role or member doesn't exist.
 - `ispss_approver_group_result` (latest result per `role_id`)
 
 Each has a `record_uuid` and `extracted_at`. Nothing in this use case has been run against a real tenant.
+
+## Use case 2: policy health (`ispss-policy-health`)
+
+`java -jar cyberark-poc.jar ispss-policy-health` or `GET /cyberark-extract/ispss/policy-health` (via `start-rest`).
+It reads every policy and gives each one `FINDING` (documented status Error or Warning), `NO_FINDING` (another
+documented status) or `CANNOT_VERIFY` (status missing or undocumented). Contract and open questions:
+[docs/API_CONTRACT.md](docs/API_CONTRACT.md), Use Case 2.
+
+| Setting | Meaning |
+|---|---|
+| `CYBERARK_POLICY_API` | `uap` (default, Access Control Policies API) or `sca` (SCA Policies API) |
+| `CYBERARK_UAP_BASE_URL` / `CYBERARK_SCA_BASE_URL` | `https://<sub>.uap.cyberark.cloud/api` / `https://<sub>.sca.cyberark.cloud/api` |
+| `CYBERARK_POLICY_APP_ID` | Application ID of the custom OAuth2 server; token URL = `CYBERARK_IDENTITY_BASE_URL/oauth2/token/<id>` |
+| `CYBERARK_POLICY_TOKEN_URL` | optional, the full token URL instead |
+| `CYBERARK_POLICY_CLIENT_ID`, `CYBERARK_POLICY_CLIENT_SECRET` | the service user (Basic auth); default `CYBERARK_CLIENT_ID` / `_SECRET` |
+| `CYBERARK_POLICY_PAGE_SIZE` | `uap` only, 1-50, default 50 |
+| `PG_*` | as for the PVWA extraction |
+
+- **Token:** the policy calls use only the custom OAuth2 token, never the platform token. The mock rejects a platform
+  token on the policy paths.
+- **Retrieval:** `uap` follows `nextToken`. The list counts as complete only when `total` is present and equals the
+  number received. A repeated `nextToken`, a mismatched or missing `total`, a non-empty `failedServices` or the page
+  limit makes the run `INCOMPLETE`. `sca` is one call, checked against its `total`.
+- **Run answer:** `status` is the retrieval result (`SUCCESS`, `INCOMPLETE`, `COMPLETED_WITH_FAILURES`, `FAILED`).
+  `health` is `FINDINGS`, `UNDETERMINED`, or `ALL_HEALTHY`, which is given only after a complete retrieval with every
+  policy verified. A failed retrieval stores nothing.
+
+**Tables:**
+- `uap_policy`: every policy as returned, generic columns, plus `policy_id` (key) and `policy_api`.
+- `uap_policy_health_result`: the latest outcome per `policy_id`.
+
+Mock settings (cmd):
+```bat
+set CYBERARK_UAP_BASE_URL=http://127.0.0.1:8300/api
+set CYBERARK_POLICY_TOKEN_URL=http://127.0.0.1:8300/oauth2/token/mock-policy-app
+set CYBERARK_POLICY_CLIENT_ID=mock-client
+set CYBERARK_POLICY_CLIENT_SECRET=mock-secret
+```
+For the SCA shape: `set CYBERARK_POLICY_API=sca` and `set CYBERARK_SCA_BASE_URL=http://127.0.0.1:8300/sca/api`.
+Nothing in this use case has been run against a real tenant.

@@ -38,7 +38,9 @@ import java.util.regex.Pattern;
  * POST /api/Redrock/query           (Role search by Name LIKE, User lookup by ID)
  * POST /api/Roles/GetRole?Name=..
  * POST /api/Roles/GetRoleMembers?name=..   (or {"Name": ".."} in the body)
- * GET  /api/policies?limit=..&amp;nextToken=..
+ * POST /oauth2/token/{app_id}           (custom OAuth2 token for the policies; Basic auth + JSON body)
+ * GET  /api/policies?limit=..&amp;nextToken=..   (Access Control Policies, "UAP"; custom token only)
+ * GET  /sca/api/policies               (SCA Policies API; custom token only)
  * </pre>
  * Binds to 127.0.0.1 only.
  */
@@ -52,6 +54,8 @@ public final class MockCyberArkServer implements AutoCloseable {
     /** Mock-only test credentials. They work nowhere else. */
     public static final String MOCK_CLIENT_ID = "mock-client";
     public static final String MOCK_CLIENT_SECRET = "mock-secret";
+    /** Mock-only Application ID of the custom OAuth2 server for the policy APIs. */
+    public static final String MOCK_POLICY_APP_ID = "mock-policy-app";
 
     /** Keys for {@link #fail(String, Fault)} and {@link #requestCount(String)}. */
     public static final String TOKEN = "token";
@@ -61,6 +65,8 @@ public final class MockCyberArkServer implements AutoCloseable {
     public static final String GET_ROLE = "get-role";
     public static final String GET_ROLE_MEMBERS = "get-role-members";
     public static final String POLICIES = "policies";
+    public static final String POLICY_TOKEN = "policy-token";
+    public static final String SCA_POLICIES = "sca-policies";
     public static final String PVWA_LOGON = "pvwa-logon";
     public static final String PVWA_LOGOFF = "pvwa-logoff";
     public static final String PVWA_VERIFY = "pvwa-verify";
@@ -87,7 +93,11 @@ public final class MockCyberArkServer implements AutoCloseable {
         /** PVWA list endpoints: ignore {@code offset} and always serve the first page. */
         IGNORE_OFFSET,
         /** PVWA list endpoints: HTTP 500 whose body contains a secret, a password and a bearer token. */
-        ERROR_WITH_SECRET
+        ERROR_WITH_SECRET,
+        /** Policy lists: no {@code total} field. */
+        NO_TOTAL,
+        /** UAP policies: a non-empty {@code failedServices} (a field of the public SwaggerHub mock only). */
+        FAILED_SERVICES
     }
 
     /** The values the {@link Fault#ERROR_WITH_SECRET} body contains; tests check that none of them leaks. */
@@ -122,6 +132,8 @@ public final class MockCyberArkServer implements AutoCloseable {
     private final MockDataset data;
     private final HttpServer server;
     private final Set<String> issuedTokens = ConcurrentHashMap.newKeySet();
+    /** Custom OAuth2 tokens; the policy endpoints accept only these, never a platform token. */
+    private final Set<String> policyTokens = ConcurrentHashMap.newKeySet();
     private final Set<String> pvwaSessions = ConcurrentHashMap.newKeySet();
     private final Map<String, Fault> faults = new ConcurrentHashMap<>();
     private final Map<String, AtomicInteger> counts = new ConcurrentHashMap<>();
@@ -165,6 +177,7 @@ public final class MockCyberArkServer implements AutoCloseable {
     /** Invalidates all issued tokens, as if they were revoked server-side. */
     public void revokeTokens() {
         issuedTokens.clear();
+        policyTokens.clear();
     }
 
     public int requestCount(String endpoint) {
@@ -202,14 +215,15 @@ public final class MockCyberArkServer implements AutoCloseable {
                 case "/api/Roles/GetRole" -> requirePost(exchange, method, this::getRole);
                 case "/api/Roles/GetRoleMembers" -> requirePost(exchange, method, this::getRoleMembers);
                 case "/api/SaasManage/GetRoleMembers" -> requirePost(exchange, method, this::getRoleMembers);
-                case "/api/policies" -> {
-                    if (method.equals("GET")) {
-                        policies(exchange);
+                case "/api/policies" -> requireGet(exchange, method, this::policies);
+                case "/sca/api/policies" -> requireGet(exchange, method, this::scaPolicies);
+                default -> {
+                    if (path.startsWith("/oauth2/token/")) {
+                        requirePost(exchange, method, ex -> policyToken(ex, path.substring("/oauth2/token/".length())));
                     } else {
-                        send(exchange, 405, error("method not allowed"));
+                        send(exchange, 404, error("MOCK: unknown path " + path));
                     }
                 }
-                default -> send(exchange, 404, error("MOCK: unknown path " + path));
             }
         }
     }
@@ -552,6 +566,37 @@ public final class MockCyberArkServer implements AutoCloseable {
         send(exchange, 200, body);
     }
 
+    /** Documented: Basic auth with the service user, JSON body {"grant_type": "client_credentials"}. */
+    private void policyToken(HttpExchange exchange, String appId) throws IOException {
+        count(POLICY_TOKEN);
+        if (applyFault(exchange, POLICY_TOKEN)) {
+            return;
+        }
+        if (!MOCK_POLICY_APP_ID.equals(appId)) {
+            send(exchange, 404, error("MOCK: unknown OAuth2 application " + appId));
+            return;
+        }
+        String expected = "Basic " + Base64.getEncoder().encodeToString(
+                (MOCK_CLIENT_ID + ":" + MOCK_CLIENT_SECRET).getBytes(StandardCharsets.UTF_8));
+        if (!expected.equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+            send(exchange, 401, error("invalid_client"));
+            return;
+        }
+        var body = mapper.readTree(readBody(exchange));
+        if (body == null || !"client_credentials".equals(body.path("grant_type").asText())) {
+            send(exchange, 400, error("unsupported_grant_type"));
+            return;
+        }
+        String token = "mock-policy-token-" + UUID.randomUUID();
+        policyTokens.add(token);
+        ObjectNode response = labelled();
+        response.put("access_token", token);
+        response.put("token_type", "Bearer");
+        response.put("expires_in", 3600);
+        response.put("scope", "full");
+        send(exchange, 200, response);
+    }
+
     // ---- identity ------------------------------------------------------------------------
 
     private void redrock(HttpExchange exchange) throws IOException {
@@ -745,13 +790,26 @@ public final class MockCyberArkServer implements AutoCloseable {
 
     // ---- policies ------------------------------------------------------------------------
 
+    /** Faults that change the body of a policy list instead of replacing the response. */
+    private static final Set<Fault> POLICY_BODY_FAULTS =
+            Set.of(Fault.REPEAT_NEXT_TOKEN, Fault.WRONG_COUNT, Fault.NO_TOTAL, Fault.FAILED_SERVICES);
+
+    private boolean policyAuthorized(HttpExchange exchange) throws IOException {
+        String header = exchange.getRequestHeaders().getFirst("Authorization");
+        if (header == null || !header.startsWith("Bearer ") || !policyTokens.contains(header.substring(7))) {
+            send(exchange, 401, error("MOCK: the policy APIs need a custom OAuth2 token"));
+            return false;
+        }
+        return true;
+    }
+
     private void policies(HttpExchange exchange) throws IOException {
         count(POLICIES);
-        if (!authorized(exchange)) {
+        if (!policyAuthorized(exchange)) {
             return;
         }
         Fault fault = faults.get(POLICIES);
-        if (fault != null && fault != Fault.REPEAT_NEXT_TOKEN && applyFault(exchange, POLICIES)) {
+        if (fault != null && !POLICY_BODY_FAULTS.contains(fault) && applyFault(exchange, POLICIES)) {
             return;
         }
         Map<String, String> query = parseForm(exchange.getRequestURI().getRawQuery());
@@ -782,8 +840,69 @@ public final class MockCyberArkServer implements AutoCloseable {
         } else if (end < data.policies.size()) {
             body.put("nextToken", encodeOffset(end));
         }
-        body.put("total", data.policies.size());
+        if (fault != Fault.NO_TOTAL) {
+            body.put("total", data.policies.size() + (fault == Fault.WRONG_COUNT ? 1 : 0));
+        }
+        if (fault == Fault.FAILED_SERVICES) {
+            body.putArray("failedServices").add("MOCK-sca");
+        }
         send(exchange, 200, body);
+    }
+
+    /** SCA Policies API: {"total", "hits": [..]}, numeric status, all policies in one response. */
+    private void scaPolicies(HttpExchange exchange) throws IOException {
+        count(SCA_POLICIES);
+        if (!policyAuthorized(exchange)) {
+            return;
+        }
+        Fault fault = faults.get(SCA_POLICIES);
+        if (fault != null && !POLICY_BODY_FAULTS.contains(fault) && applyFault(exchange, SCA_POLICIES)) {
+            return;
+        }
+        ObjectNode body = labelled();
+        if (fault != Fault.NO_TOTAL) {
+            body.put("total", data.policies.size() + (fault == Fault.WRONG_COUNT ? 1 : 0));
+        }
+        ArrayNode hits = body.putArray("hits");
+        for (MockDataset.PolicyRow row : data.policies) {
+            ObjectNode p = hits.addObject();
+            p.put("tenantId", "00000000-0000-4000-8000-000000000000");
+            p.put("name", row.name());
+            Integer code = scaStatus(row.status());
+            if (code == null) {
+                p.putNull("status");
+            } else {
+                p.put("status", code);
+            }
+            p.put("description", "MOCK policy");
+            p.put("creationDate", "2026-09-01T10:00:00.000000+00:00");
+            p.put("lastChanged", "2026-10-10T08:30:00.000000+00:00");
+            p.put("cloudProvider", 0);
+            p.put("policyId", row.policyId());
+            p.putArray("targetAttributes");
+            p.putArray("entities");
+            if (row.statusCode() != null) {
+                p.put("faultCode", 1000 + (row.statusCode().hashCode() & 0xFF));
+                p.put("statusTooltipMessage", row.statusDescription());
+            }
+        }
+        send(exchange, 200, body);
+    }
+
+    /** The documented SCA numbers; Suspended and any other value get numbers SCA does not document. */
+    private static Integer scaStatus(String status) {
+        if (status == null) {
+            return null;
+        }
+        return switch (status) {
+            case "Active" -> 1;
+            case "Suspended" -> 2;
+            case "Expired" -> 3;
+            case "Error" -> 4;
+            case "Warning" -> 5;
+            case "Validating" -> 6;
+            default -> 99;
+        };
     }
 
     private ObjectNode policyJson(MockDataset.PolicyRow row) {
@@ -807,9 +926,9 @@ public final class MockCyberArkServer implements AutoCloseable {
         ObjectNode createdBy = metadata.putObject("createdBy");
         createdBy.put("user", "mock.admin@example.test");
         createdBy.put("time", "2026-09-01T10:00:00");
-        ObjectNode updatedOn = metadata.putObject("updatedOn");
-        updatedOn.put("user", "mock.admin@example.test");
-        updatedOn.put("time", "2026-10-10T08:30:00");
+        ObjectNode updatedBy = metadata.putObject("updatedBy");
+        updatedBy.put("user", "mock.admin@example.test");
+        updatedBy.put("time", "2026-10-10T08:30:00");
         metadata.putArray("policyTags");
         metadata.put("timeZone", "GMT");
         policy.putArray("principals");
@@ -943,7 +1062,9 @@ public final class MockCyberArkServer implements AutoCloseable {
                 "  POST " + root + "/api/Redrock/query",
                 "  POST " + root + "/api/Roles/GetRole?Name=<roleId>",
                 "  POST " + root + "/api/Roles/GetRoleMembers?name=<roleId>",
-                "  GET  " + root + "/api/policies?limit=50&nextToken=<token>",
+                "  POST " + root + "/oauth2/token/" + MOCK_POLICY_APP_ID + "   (custom OAuth2 token for the policies)",
+                "  GET  " + root + "/api/policies?limit=50&nextToken=<token>   (Access Control Policies)",
+                "  GET  " + root + "/sca/api/policies   (SCA Policies API)",
                 "  POST " + root + PVWA_APP + "/API/auth/{Cyberark|LDAP|RADIUS|Windows}/Logon/",
                 "  POST " + root + PVWA_APP + "/API/Auth/Logoff/",
                 "  GET  " + root + PVWA_APP + "/WebServices/PIMServices.svc/Verify/",

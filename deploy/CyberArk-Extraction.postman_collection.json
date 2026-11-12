@@ -1,0 +1,165 @@
+{
+  "info": {
+    "name": "CyberArk Extraction Service",
+    "description": "Calls the KeyForge CyberArk extraction REST service (start-rest). Every request is GET with HTTP Basic Auth (the REST_USERNAME / REST_PASSWORD set on the server). Set the collection variables baseUrl, restUsername and restPassword before running. Extraction requests read CyberArk and write to PostgreSQL; only one run at a time is allowed (a second call meanwhile answers 409).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{restUsername}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{restPassword}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8210/cyberark-extract"
+    },
+    {
+      "key": "restUsername",
+      "value": ""
+    },
+    {
+      "key": "restPassword",
+      "value": ""
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (pm.info.requestName !== 'Route list') {",
+          "  pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+          "  pm.test('run status SUCCESS', () => pm.expect(pm.response.json().status).to.eql('SUCCESS'));",
+          "  pm.test('no secret value in the response', () => pm.expect(pm.response.text()).to.not.include('\"secret\"'));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Route list",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('lists the PVWA routes', () => pm.expect(Object.keys(pm.response.json().routes)).to.include('pvwa/safes'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}"
+      }
+    },
+    {
+      "name": "PVWA - Verify (health check, stores nothing)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/verify"
+      }
+    },
+    {
+      "name": "PVWA - Safes",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/safes"
+      }
+    },
+    {
+      "name": "PVWA - Accounts (secrets removed)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/accounts"
+      }
+    },
+    {
+      "name": "PVWA - Safe members",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/safe-members"
+      }
+    },
+    {
+      "name": "PVWA - Target platforms",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/target-platforms"
+      }
+    },
+    {
+      "name": "PVWA - Platform details",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/platform-details"
+      }
+    },
+    {
+      "name": "PVWA - Users (needs Audit users)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/users"
+      }
+    },
+    {
+      "name": "PVWA - User groups (needs Audit users)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/user-groups"
+      }
+    },
+    {
+      "name": "PVWA - Discovered accounts (needs Vault Admins or PVWAAccountsFeedAdmins)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/pvwa/discovered-accounts"
+      }
+    },
+    {
+      "name": "Use case 1 - Approver groups (Identity APIs)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/ispss/approver-groups"
+      }
+    },
+    {
+      "name": "Use case 2 - Policy health (custom OAuth2 token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('health is a conclusion', () => pm.expect(['FINDINGS', 'ALL_HEALTHY', 'UNDETERMINED']).to.include(body.health));",
+              "pm.test('every policy has an outcome', () => body.policies.forEach(p =>",
+              "    pm.expect(['FINDING', 'NO_FINDING', 'CANNOT_VERIFY']).to.include(p.outcome)));",
+              "pm.test('no access token in the response', () => pm.expect(pm.response.text()).to.not.include('access_token'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/ispss/policy-health",
+        "description": "Every SCA/SIA access policy with outcome FINDING (Error/Warning), NO_FINDING or CANNOT_VERIFY; stored in uap_policy and uap_policy_health_result. health is ALL_HEALTHY only after a complete retrieval."
+      }
+    }
+  ]
+}
