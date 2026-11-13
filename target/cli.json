@@ -1,0 +1,67 @@
+{
+  "route" : "cloud/redrock",
+  "started_at" : "2026-11-13T17:44:27.935195300Z",
+  "operation" : "redrock",
+  "request" : {
+    "method" : "POST",
+    "url" : "http://127.0.0.1:18555/api/Redrock/query",
+    "body" : {
+      "Script" : "SELECT ID, Name, RoleType, ReadOnly, Description FROM Role WHERE Name LIKE 'APP-CYA-ISPSS-SCA-AWS-%-BUApprovers' ORDER BY ID",
+      "args" : {
+        "PageNumber" : 1,
+        "PageSize" : 2,
+        "Caching" : -1
+      }
+    }
+  },
+  "auth" : "POST http://127.0.0.1:18555/oauth2/platformtoken (form: grant_type=client_credentials, client_id, client_secret)",
+  "http_status" : 200,
+  "content_type" : "application/json",
+  "response_bytes" : 718,
+  "response" : {
+  "_mock" : "FABRICATED sample shaped per docs/API_CONTRACT.md - not a real CyberArk tenant response",
+  "success" : true,
+  "Result" : {
+    "Count" : 2,
+    "Results" : [ {
+      "Row" : {
+        "ID" : "role-fin",
+        "Name" : "APP-CYA-ISPSS-SCA-AWS-Finance-BUApprovers",
+        "RoleType" : "PrincipalList",
+        "ReadOnly" : false,
+        "Description" : "MOCK Finance AWS approvers"
+      }
+    }, {
+      "Row" : {
+        "ID" : "role-hr",
+        "Name" : "APP-CYA-ISPSS-SCA-AWS-HR-BUApprovers",
+        "RoleType" : "PrincipalList",
+        "ReadOnly" : false,
+        "Description" : "MOCK HR AWS approvers"
+      }
+    } ],
+    "FullCount" : 5
+  },
+  "Message" : null
+},
+  "completeness" : {
+    "response_complete" : true,
+    "paged" : true,
+    "records_in_response" : 2,
+    "more_available" : null,
+    "all_records_in_this_response" : null,
+    "basis" : "full page (2 rows): more rows may exist. Request the next page; a short or empty page means the end",
+    "next_request" : {
+      "pageNumber" : 2,
+      "pageSize" : 2
+    },
+    "reported_by_cyberark" : {
+      "Count" : 2,
+      "FullCount" : 5
+    }
+  },
+  "ok" : true,
+  "status" : "SUCCESS",
+  "duration_ms" : 117,
+  "ended_at" : "2026-11-13T17:44:28.322819700Z"
+}

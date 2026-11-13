@@ -234,9 +234,16 @@ public final class Main {
         Map<String, Object> result = ExtractionRestServer.run(name,
                 CloudRoutes.routes(System::getenv).get(name), params);
         try {
-            System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(result));
+            // streamed to stdout: a large CyberArk body is copied from its temporary file, not built in memory
+            new ObjectMapper().writerWithDefaultPrettyPrinter()
+                    .without(com.fasterxml.jackson.core.JsonGenerator.Feature.AUTO_CLOSE_TARGET)
+                    .writeValue(System.out, result);
+            System.out.println();
         } catch (IOException e) {
-            System.out.println(result);
+            System.err.println("Could not write the result: " + e.getMessage());
+            return 1;
+        } finally {
+            com.keyforge.cyberarkpoc.client.ResponseBody.release(result);
         }
         return switch (String.valueOf(result.get("status"))) {
             case "SUCCESS" -> 0;

@@ -1,0 +1,22 @@
+Mock CyberArk running at http://127.0.0.1:18555 (FABRICATED data, not a CyberArk tenant)
+  POST http://127.0.0.1:18555/oauth2/platformtoken
+  POST http://127.0.0.1:18555/api/Redrock/query
+  POST http://127.0.0.1:18555/api/Roles/GetRole?Name=<roleId>
+  POST http://127.0.0.1:18555/api/Roles/GetRoleMembers?name=<roleId>
+  POST http://127.0.0.1:18555/oauth2/token/mock-policy-app   (custom OAuth2 token for the policies)
+  GET  http://127.0.0.1:18555/api/policies?limit=50&nextToken=<token>   (Access Control Policies)
+  GET  http://127.0.0.1:18555/sca/api/policies   (SCA Policies API)
+  POST http://127.0.0.1:18555/PasswordVault/API/auth/{Cyberark|LDAP|RADIUS|Windows}/Logon/
+  POST http://127.0.0.1:18555/PasswordVault/API/Auth/Logoff/
+  GET  http://127.0.0.1:18555/PasswordVault/WebServices/PIMServices.svc/Verify/
+  GET  http://127.0.0.1:18555/PasswordVault/API/Safes/?offset=&limit=
+  GET  http://127.0.0.1:18555/PasswordVault/API/Accounts?offset=&limit=
+  GET  http://127.0.0.1:18555/PasswordVault/API/Safes/{SafeUrlId}/Members/?offset=&limit=
+  GET  http://127.0.0.1:18555/PasswordVault/API/platforms/targets/
+  GET  http://127.0.0.1:18555/PasswordVault/API/Platforms/{PlatformID}/
+  GET  http://127.0.0.1:18555/PasswordVault/API/Users/?ExtendedDetails=true&pageOffset=&pageSize=
+  GET  http://127.0.0.1:18555/PasswordVault/API/UserGroups/?includeMembers=true&offset=&limit=
+  GET  http://127.0.0.1:18555/PasswordVault/API/DiscoveredAccounts/?offset=&limit=
+  Mock credentials: client_id=mock-client client_secret=mock-secret
+  Mock PVWA vault user: mock-vault-user / mock-vault-pass (PVWA base URL http://127.0.0.1:18555/PasswordVault)
+Press Ctrl+C to stop.

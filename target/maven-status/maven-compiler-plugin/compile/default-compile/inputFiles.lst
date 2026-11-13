@@ -11,6 +11,8 @@ D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\Identi
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\Json.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\PolicyClient.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\PvwaClient.java
+D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\ResponseBody.java
+D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\ResponseInspector.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\SecretRedactor.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\TokenProvider.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\config\ConfigException.java

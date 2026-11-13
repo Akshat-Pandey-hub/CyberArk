@@ -1,6 +1,7 @@
 package com.keyforge.cyberarkpoc.rest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.keyforge.cyberarkpoc.client.ResponseBody;
 import com.keyforge.cyberarkpoc.client.CyberArkApiException;
 import com.keyforge.cyberarkpoc.client.ErrorSanitizer;
 import com.keyforge.cyberarkpoc.client.PvwaClient;
@@ -283,16 +284,20 @@ public final class ExtractionRestServer {
                 send(ex, 409, error("another extraction is already running; nothing was started"));
                 return;
             }
-            Map<String, Object> result;
+            Map<String, Object> result = null;
             try {
-                result = route != null ? execute(name, route)
-                        : other != null ? run(name, other)
-                        : run(name, query, queryParams(ex.getRequestURI().getRawQuery()));
+                try {
+                    result = route != null ? execute(name, route)
+                            : other != null ? run(name, other)
+                            : run(name, query, queryParams(ex.getRequestURI().getRawQuery()));
+                } finally {
+                    busy.set(false);
+                }
+                ex.getResponseHeaders().add("X-KF-Run-Status", String.valueOf(result.get("status")));
+                send(ex, httpStatus(result.get("status")), result);
             } finally {
-                busy.set(false);
+                ResponseBody.release(result); // deletes the temporary file of a large CyberArk body
             }
-            ex.getResponseHeaders().add("X-KF-Run-Status", String.valueOf(result.get("status")));
-            send(ex, httpStatus(result.get("status")), result);
         } catch (IOException e) {
             System.err.println("[rest] could not send the response: " + ErrorSanitizer.clean(e.getMessage()));
         } catch (RuntimeException e) {
@@ -380,12 +385,17 @@ public final class ExtractionRestServer {
         return body;
     }
 
+    /**
+     * Writes the JSON straight to the connection (chunked), so a large CyberArk body is copied from its temporary file
+     * in pieces instead of being built in memory first. The status and headers are final before anything is written:
+     * the result is complete and checked by then. If writing fails half way, the JSON the client receives is cut off
+     * (and therefore invalid), never a shorter but valid document.
+     */
     private static void send(HttpExchange ex, int status, Object body) throws IOException {
-        byte[] bytes = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(body);
         ex.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-        ex.sendResponseHeaders(status, bytes.length);
-        try (OutputStream out = ex.getResponseBody()) {
-            out.write(bytes);
+        ex.sendResponseHeaders(status, 0);
+        try (OutputStream out = new java.io.BufferedOutputStream(ex.getResponseBody(), 64 * 1024)) {
+            MAPPER.writerWithDefaultPrettyPrinter().writeValue(out, body);
         }
     }
 }

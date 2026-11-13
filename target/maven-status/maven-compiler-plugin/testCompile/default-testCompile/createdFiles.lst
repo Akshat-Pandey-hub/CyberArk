@@ -6,8 +6,12 @@ com\keyforge\cyberarkpoc\check\ApproverGroupRunTest.class
 com\keyforge\cyberarkpoc\check\PolicyHealthRunTest.class
 com\keyforge\cyberarkpoc\extract\UsersExtractionTest.class
 com\keyforge\cyberarkpoc\extract\UserGroupsExtractionTest.class
+com\keyforge\cyberarkpoc\client\LargeBodies$CutOffServer.class
+com\keyforge\cyberarkpoc\client\MemoryProbe.class
+com\keyforge\cyberarkpoc\client\LargeResponseTest.class
 com\keyforge\cyberarkpoc\extract\AccountsExtractionTest.class
 com\keyforge\cyberarkpoc\config\PvwaConfigTest.class
+com\keyforge\cyberarkpoc\client\LargeBodies$Digest.class
 com\keyforge\cyberarkpoc\rest\RestFailureHandlingTest.class
 com\keyforge\cyberarkpoc\client\CyberArkClientTest.class
 com\keyforge\cyberarkpoc\store\GenericStorePostgresTest.class
@@ -16,6 +20,7 @@ com\keyforge\cyberarkpoc\client\RoleMembersParsingTest.class
 com\keyforge\cyberarkpoc\mock\MockCyberArkServerTest.class
 com\keyforge\cyberarkpoc\check\ApproverGroupCheckTest.class
 com\keyforge\cyberarkpoc\client\OfficialExamplesContractTest.class
+com\keyforge\cyberarkpoc\client\LargeBodies.class
 com\keyforge\cyberarkpoc\client\PvwaClientTest$TestClock.class
 com\keyforge\cyberarkpoc\client\CloudApiTest$ExtractionParams.class
 com\keyforge\cyberarkpoc\client\CloudApiTest.class
@@ -27,6 +32,7 @@ com\keyforge\cyberarkpoc\store\StoreSqlTest.class
 com\keyforge\cyberarkpoc\StubHttpServer$Reply.class
 com\keyforge\cyberarkpoc\extract\OffsetPagerTest.class
 com\keyforge\cyberarkpoc\client\ErrorSanitizerTest.class
+com\keyforge\cyberarkpoc\client\LargeResponseTest$IoWriter.class
 com\keyforge\cyberarkpoc\client\PvwaClientTest.class
 com\keyforge\cyberarkpoc\MockFixture.class
 com\keyforge\cyberarkpoc\rest\CloudRoutesTest.class

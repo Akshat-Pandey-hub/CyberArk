@@ -162,4 +162,61 @@ class CloudRoutesTest {
                 + "'APP-CYA-ISPSS-SCA-AWS-%-BUApprovers'"), "backward-compatible default");
         assertEquals(-1, fallback.at("/request/body/args/Caching").asInt());
     }
+
+    @Test
+    void aLargeBodyIsStreamedThroughRestWithItsFieldsAndTheFileIsDeleted(@org.junit.jupiter.api.io.TempDir
+                                                                         java.nio.file.Path spoolDir) throws Exception {
+        int rows = 100_000; // ~23 MB
+        try (com.keyforge.cyberarkpoc.StubHttpServer stub = new com.keyforge.cyberarkpoc.StubHttpServer()
+                .reply("/api/oauth2/platformtoken", 200, "{\"access_token\":\"stub-token-abc\",\"expires_in\":900}")
+                .handle("/api/Redrock/query", ex -> {
+                    ex.sendResponseHeaders(200, 0);
+                    try (java.io.OutputStream o = new java.io.BufferedOutputStream(ex.getResponseBody(), 65536)) {
+                        com.keyforge.cyberarkpoc.client.LargeBodies.redrock(o, rows);
+                    }
+                })) {
+            env.put("CYBERARK_IDENTITY_BASE_URL", stub.rootUrl() + "/api");
+            env.put("CYBERARK_TOKEN_URL", stub.rootUrl() + "/api/oauth2/platformtoken");
+            env.put("CYBERARK_CLIENT_ID", "client");
+            env.put("CYBERARK_CLIENT_SECRET", "secret-value");
+            env.put("CYBERARK_SPOOL_DIR", spoolDir.toString());
+            env.put("CYBERARK_SPOOL_MIN_FREE_MB", "0");
+            rest = new ExtractionRestServer(new ExtractionRestServer.Settings("127.0.0.1", 0, "rest-user",
+                    "rest-pass"), () -> null, Map.of(), Map.of(), CloudRoutes.routes(() -> env));
+            rest.start();
+            HttpResponse<String> r = get("cloud/redrock?pageNumber=1&pageSize=" + (rows + 1));
+
+            assertEquals(200, r.statusCode());
+            assertEquals("SUCCESS", r.headers().firstValue("X-KF-Run-Status").orElse(""));
+            JsonNode body = MAPPER.readTree(r.body());
+            for (String field : new String[] {"route", "operation", "request", "auth", "http_status", "response",
+                    "response_bytes", "completeness", "ok", "status", "duration_ms"}) {
+                assertTrue(body.has(field), field);
+            }
+            assertEquals(rows, body.at("/response/Result/Results").size());
+            assertEquals(rows, body.at("/completeness/records_in_response").asInt());
+            assertTrue(body.at("/completeness/all_records_in_this_response").asBoolean());
+            try (var files = java.nio.file.Files.list(spoolDir)) {
+                assertEquals(0, files.count(), "temporary file deleted after the response was sent");
+            }
+        }
+    }
+
+    @Test
+    void rateLimitingAndTheNewDocumentedParametersOverRest() throws Exception {
+        start();
+        HttpResponse<String> role = get("cloud/role?id=role-fin&SuppressPrincipalsList=true");
+        assertEquals(200, role.statusCode(), role.body());
+        assertTrue(MAPPER.readTree(role.body()).at("/request/url").asText().endsWith("SuppressPrincipalsList=true"));
+        assertEquals(400, get("cloud/role?id=role-fin&SuppressPrincipalsList=yes").statusCode());
+        assertEquals(400, get("cloud/policies?cloud_provider=aws").statusCode(), "SCA parameter on the UAP API");
+
+        mock.fail(MockCyberArkServer.POLICIES, Fault.HTTP_429);
+        HttpResponse<String> limited = get("cloud/policies?limit=2");
+        assertEquals(502, limited.statusCode());
+        JsonNode body = MAPPER.readTree(limited.body());
+        assertEquals("RATE_LIMITED", body.get("error_kind").asText());
+        assertEquals(429, body.get("http_status").asInt());
+        assertEquals("30", body.get("retry_after").asText());
+    }
 }

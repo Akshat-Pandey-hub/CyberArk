@@ -1,6 +1,7 @@
 package com.keyforge.cyberarkpoc;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -25,11 +26,17 @@ public final class StubHttpServer implements AutoCloseable {
 
     private final HttpServer server;
     private final Map<String, Reply> replies = new ConcurrentHashMap<>();
+    private final Map<String, HttpHandler> handlers = new ConcurrentHashMap<>();
     private final List<String> authorizationHeaders = new CopyOnWriteArrayList<>();
 
     public StubHttpServer() {
         try {
             server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "stub-http");
+                t.setDaemon(true);
+                return t;
+            }));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -40,6 +47,12 @@ public final class StubHttpServer implements AutoCloseable {
     /** Answers {@code path} (without query string) with this status and body. */
     public StubHttpServer reply(String path, int status, String body) {
         replies.put(path, new Reply(status, body));
+        return this;
+    }
+
+    /** Answers {@code path} with a custom handler (streamed, slow or cut-off bodies); the handler sends everything. */
+    public StubHttpServer handle(String path, HttpHandler handler) {
+        handlers.put(path, handler);
         return this;
     }
 
@@ -61,6 +74,11 @@ public final class StubHttpServer implements AutoCloseable {
         try {
             String path = exchange.getRequestURI().getPath();
             exchange.getRequestBody().readAllBytes();
+            HttpHandler custom = handlers.get(path);
+            if (custom != null) {
+                custom.handle(exchange);
+                return;
+            }
             String auth = exchange.getRequestHeaders().getFirst("Authorization");
             if (auth != null) {
                 authorizationHeaders.add(auth);

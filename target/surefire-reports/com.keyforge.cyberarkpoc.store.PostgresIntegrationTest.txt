@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.keyforge.cyberarkpoc.store.PostgresIntegrationTest
 -------------------------------------------------------------------------------
-Tests run: 15, Failures: 0, Errors: 0, Skipped: 15, Time elapsed: 0.008 s -- in com.keyforge.cyberarkpoc.store.PostgresIntegrationTest
+Tests run: 15, Failures: 0, Errors: 0, Skipped: 15, Time elapsed: 0.016 s -- in com.keyforge.cyberarkpoc.store.PostgresIntegrationTest

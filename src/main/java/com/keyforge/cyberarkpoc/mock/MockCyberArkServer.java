@@ -103,7 +103,11 @@ public final class MockCyberArkServer implements AutoCloseable {
         /** UAP policies: a non-empty {@code failedServices} (a field of the public SwaggerHub mock only). */
         FAILED_SERVICES,
         /** Any endpoint: wait {@link #DELAY_MILLIS} before answering normally (for client timeout tests). */
-        DELAY
+        DELAY,
+        /** Any endpoint: HTTP 429 with {@code Retry-After: 30} (rate limiting; not documented by CyberArk). */
+        HTTP_429,
+        /** UAP policies: the last page carries {@code "nextToken": ""} instead of no nextToken (the SDK accepts both). */
+        EMPTY_FINAL_TOKEN
     }
 
     public static final long DELAY_MILLIS = 2500;
@@ -834,6 +838,11 @@ public final class MockCyberArkServer implements AutoCloseable {
         result.put("ReadOnly", false);
         // Roles API OpenAPI: "Each principal is of the form t=id, where 't' is one of 'u' (user), 'g' (group), or
         // 'r' (role) and 'id' is the principal name."
+        if ("true".equalsIgnoreCase(parseForm(exchange.getRequestURI().getRawQuery()).get("SuppressPrincipalsList"))) {
+            body.putNull("Message");
+            send(exchange, 200, body);
+            return;
+        }
         ArrayNode principals = result.putArray("Principals");
         data.members.getOrDefault(row.id(), List.of()).forEach(m -> principals.add(
                 switch (String.valueOf(m.type()).toLowerCase(java.util.Locale.ROOT)) {
@@ -907,8 +916,8 @@ public final class MockCyberArkServer implements AutoCloseable {
     // ---- policies ------------------------------------------------------------------------
 
     /** Faults that change the body of a policy list instead of replacing the response. */
-    private static final Set<Fault> POLICY_BODY_FAULTS =
-            Set.of(Fault.REPEAT_NEXT_TOKEN, Fault.WRONG_COUNT, Fault.NO_TOTAL, Fault.FAILED_SERVICES);
+    private static final Set<Fault> POLICY_BODY_FAULTS = Set.of(Fault.REPEAT_NEXT_TOKEN, Fault.WRONG_COUNT,
+            Fault.NO_TOTAL, Fault.FAILED_SERVICES, Fault.EMPTY_FINAL_TOKEN);
 
     private boolean policyAuthorized(HttpExchange exchange) throws IOException {
         String header = exchange.getRequestHeaders().getFirst("Authorization");
@@ -963,6 +972,8 @@ public final class MockCyberArkServer implements AutoCloseable {
             body.put("nextToken", encodeOffset(0));
         } else if (end < data.policies.size()) {
             body.put("nextToken", encodeOffset(end));
+        } else if (fault == Fault.EMPTY_FINAL_TOKEN) {
+            body.put("nextToken", "");
         }
         if (fault != Fault.NO_TOTAL) {
             body.put("total", data.policies.size() + (fault == Fault.WRONG_COUNT ? 1 : 0));
@@ -1085,6 +1096,13 @@ public final class MockCyberArkServer implements AutoCloseable {
             case HTTP_500 -> send(exchange, 500, error("MOCK: injected internal error"));
             case HTTP_401 -> send(exchange, 401, error("MOCK: injected unauthorized"));
             case HTTP_403 -> send(exchange, 403, error("MOCK: injected forbidden"));
+            case HTTP_429 -> {
+                exchange.getResponseHeaders().set("Retry-After", "30");
+                send(exchange, 429, error("MOCK: injected too many requests"));
+            }
+            case EMPTY_FINAL_TOKEN -> {
+                return false;
+            }
             case SUCCESS_FALSE -> send(exchange, 200, failure("MOCK: injected success=false"));
             case MALFORMED_JSON -> sendRaw(exchange, 200, "{ this is not json");
             case REPEAT_NEXT_TOKEN -> {

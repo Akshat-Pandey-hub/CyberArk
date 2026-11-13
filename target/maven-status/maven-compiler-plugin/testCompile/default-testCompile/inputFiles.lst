@@ -5,6 +5,9 @@ D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\PolicyH
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\CloudApiTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\CyberArkClientTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\ErrorSanitizerTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\LargeBodies.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\LargeResponseTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\MemoryProbe.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\OfficialExamplesContractTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\PolicyClientTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\PvwaClientTest.java

@@ -56,7 +56,8 @@ class CloudApiTest {
     }
 
     private static JsonNode response(Map<String, Object> out) {
-        return (JsonNode) out.get("response");
+        Object body = out.get("response");
+        return body instanceof ResponseBody raw ? raw.tree() : (JsonNode) body;
     }
 
     private static String json(Object value) throws Exception {
