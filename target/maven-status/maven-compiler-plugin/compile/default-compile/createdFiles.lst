@@ -2,6 +2,7 @@ com\keyforge\cyberarkpoc\check\ApproverGroupCheck$MemberRows.class
 com\keyforge\cyberarkpoc\extract\UnpagedList.class
 com\keyforge\cyberarkpoc\client\IdentityResponses$RedrockPage.class
 com\keyforge\cyberarkpoc\check\ApproverGroupCheck$1.class
+com\keyforge\cyberarkpoc\client\CloudApi$Target.class
 com\keyforge\cyberarkpoc\client\SecretRedactor$Redacted.class
 com\keyforge\cyberarkpoc\store\GenericRecordStore$Prepared.class
 com\keyforge\cyberarkpoc\client\CyberArkApiException$Kind.class
@@ -23,8 +24,10 @@ com\keyforge\cyberarkpoc\config\PolicyConfig.class
 com\keyforge\cyberarkpoc\model\Role.class
 com\keyforge\cyberarkpoc\client\PolicyClient.class
 com\keyforge\cyberarkpoc\mock\SampleData.class
+com\keyforge\cyberarkpoc\rest\ExtractionRestServer$QueryRoute.class
 com\keyforge\cyberarkpoc\extract\ExtractionRunner.class
 com\keyforge\cyberarkpoc\store\RawRecordRepository$1.class
+com\keyforge\cyberarkpoc\client\CloudApi.class
 com\keyforge\cyberarkpoc\client\IdentityResponses.class
 com\keyforge\cyberarkpoc\client\TokenProvider.class
 com\keyforge\cyberarkpoc\store\Column.class
@@ -37,6 +40,7 @@ com\keyforge\cyberarkpoc\store\DbConfig.class
 com\keyforge\cyberarkpoc\extract\ExtractionRunner$Stored.class
 com\keyforge\cyberarkpoc\extract\OffsetPager.class
 com\keyforge\cyberarkpoc\store\RawRecordRepository$Outcome.class
+com\keyforge\cyberarkpoc\config\CyberArkConfig$AuthMethod.class
 com\keyforge\cyberarkpoc\model\CyberArkUser.class
 com\keyforge\cyberarkpoc\mock\MockCyberArkServer$1.class
 com\keyforge\cyberarkpoc\store\GenericRecordStore$Kind.class
@@ -60,6 +64,7 @@ com\keyforge\cyberarkpoc\client\TokenProvider$Style.class
 com\keyforge\cyberarkpoc\rest\ExtractionRestServer.class
 com\keyforge\cyberarkpoc\store\GenericRecordStore.class
 com\keyforge\cyberarkpoc\client\CyberArkApiException.class
+com\keyforge\cyberarkpoc\rest\CloudRoutes.class
 com\keyforge\cyberarkpoc\check\PolicyHealthCheck.class
 com\keyforge\cyberarkpoc\config\CyberArkConfig.class
 com\keyforge\cyberarkpoc\mock\MockDataset.class
@@ -73,6 +78,7 @@ com\keyforge\cyberarkpoc\rest\ExtractionRestServer$Route.class
 com\keyforge\cyberarkpoc\client\PolicyClient$Listing.class
 com\keyforge\cyberarkpoc\mock\MockDataset$MemberRow.class
 com\keyforge\cyberarkpoc\client\SecretRedactor.class
+com\keyforge\cyberarkpoc\config\CyberArkConfig$TokenBody.class
 com\keyforge\cyberarkpoc\check\PolicyHealthCheck$PolicyResult.class
 com\keyforge\cyberarkpoc\check\ApproverGroupCheck$MemberResult.class
 com\keyforge\cyberarkpoc\mock\MockDataset$RoleRow.class

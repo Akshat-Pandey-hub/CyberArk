@@ -3,6 +3,7 @@ D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\check\Approve
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\check\PolicyHealthCheck.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\check\PolicyHealthRun.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\check\ReportPrinter.java
+D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\CloudApi.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\CyberArkApiException.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\CyberArkClient.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\client\ErrorSanitizer.java
@@ -31,6 +32,7 @@ D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\model\CyberAr
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\model\Role.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\model\RoleDetails.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\model\RoleMember.java
+D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\rest\CloudRoutes.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\rest\ExtractionRestServer.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\store\Column.java
 D:\cyberark-integration-poc\src\main\java\com\keyforge\cyberarkpoc\store\DbConfig.java

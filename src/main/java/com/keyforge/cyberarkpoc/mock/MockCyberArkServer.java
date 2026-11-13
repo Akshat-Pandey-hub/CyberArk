@@ -38,7 +38,8 @@ import java.util.regex.Pattern;
  * POST /api/Redrock/query           (Role search by Name LIKE, User lookup by ID)
  * POST /api/Roles/GetRole?Name=..
  * POST /api/Roles/GetRoleMembers?name=..   (or {"Name": ".."} in the body)
- * POST /oauth2/token/{app_id}           (custom OAuth2 token for the policies; Basic auth + JSON body)
+ * POST /oauth2/token/{app_id}           (OAuth2 app token; Basic auth + JSON or form body; the policy app's
+ *                                       tokens work on the policy paths, the identity app's on the Identity paths)
  * GET  /api/policies?limit=..&amp;nextToken=..   (Access Control Policies, "UAP"; custom token only)
  * GET  /sca/api/policies               (SCA Policies API; custom token only)
  * </pre>
@@ -56,11 +57,14 @@ public final class MockCyberArkServer implements AutoCloseable {
     public static final String MOCK_CLIENT_SECRET = "mock-secret";
     /** Mock-only Application ID of the custom OAuth2 server for the policy APIs. */
     public static final String MOCK_POLICY_APP_ID = "mock-policy-app";
+    /** Mock-only Application ID of an OAuth2 app for the Identity calls (the "Use queries" style of login). */
+    public static final String MOCK_IDENTITY_APP_ID = "mock-identity-app";
 
     /** Keys for {@link #fail(String, Fault)} and {@link #requestCount(String)}. */
     public static final String TOKEN = "token";
     public static final String REDROCK_ROLE = "redrock-role";
     public static final String REDROCK_USER = "redrock-user";
+    public static final String REDROCK_USERS = "redrock-users";
     public static final String REDROCK_ROLE_BY_ID = "redrock-role-by-id";
     public static final String GET_ROLE = "get-role";
     public static final String GET_ROLE_MEMBERS = "get-role-members";
@@ -97,8 +101,12 @@ public final class MockCyberArkServer implements AutoCloseable {
         /** Policy lists: no {@code total} field. */
         NO_TOTAL,
         /** UAP policies: a non-empty {@code failedServices} (a field of the public SwaggerHub mock only). */
-        FAILED_SERVICES
+        FAILED_SERVICES,
+        /** Any endpoint: wait {@link #DELAY_MILLIS} before answering normally (for client timeout tests). */
+        DELAY
     }
+
+    public static final long DELAY_MILLIS = 2500;
 
     /** The values the {@link Fault#ERROR_WITH_SECRET} body contains; tests check that none of them leaks. */
     public static final List<String> ERROR_BODY_SECRETS =
@@ -125,6 +133,8 @@ public final class MockCyberArkServer implements AutoCloseable {
     public List<String> redrockBodies() {
         return redrockBodies;
     }
+    private static final Pattern SELECT_LIST = Pattern.compile("(?is)^\\s*SELECT\\s+(.+?)\\s+FROM\\s");
+    private static final Pattern USER_TABLE_QUERY = Pattern.compile("(?is)\\bFROM\\s+User\\b");
     private static final Pattern USER_QUERY =
             Pattern.compile("(?is)\\bFROM\\s+User\\s+WHERE\\s+ID\\s*=\\s*'((?:[^']|'')*)'");
 
@@ -172,6 +182,13 @@ public final class MockCyberArkServer implements AutoCloseable {
 
     public void clearFaults() {
         faults.clear();
+    }
+
+    /** Each {@code /oauth2/token/{app}} request as "Content-Type | body" (the credentials travel in the header). */
+    private final List<String> appTokenRequests = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public List<String> appTokenRequests() {
+        return appTokenRequests;
     }
 
     /** Invalidates all issued tokens, as if they were revoked server-side. */
@@ -572,23 +589,33 @@ public final class MockCyberArkServer implements AutoCloseable {
         if (applyFault(exchange, POLICY_TOKEN)) {
             return;
         }
-        if (!MOCK_POLICY_APP_ID.equals(appId)) {
+        boolean identityApp = MOCK_IDENTITY_APP_ID.equals(appId);
+        if (!MOCK_POLICY_APP_ID.equals(appId) && !identityApp) {
             send(exchange, 404, error("MOCK: unknown OAuth2 application " + appId));
             return;
         }
         String expected = "Basic " + Base64.getEncoder().encodeToString(
                 (MOCK_CLIENT_ID + ":" + MOCK_CLIENT_SECRET).getBytes(StandardCharsets.UTF_8));
         if (!expected.equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
-            send(exchange, 401, error("invalid_client"));
+            ObjectNode rejected = labelled();
+            rejected.put("error", "invalid_client");
+            rejected.put("error_description", "MOCK: client authentication failed");
+            send(exchange, 401, rejected);
             return;
         }
-        var body = mapper.readTree(readBody(exchange));
-        if (body == null || !"client_credentials".equals(body.path("grant_type").asText())) {
+        // Both documented formats: JSON (SCA API reference) and form ("Use queries" client, official SDK).
+        String contentType = String.valueOf(exchange.getRequestHeaders().getFirst("Content-Type"));
+        String raw = readBody(exchange);
+        appTokenRequests.add(contentType + " | " + raw);
+        String grantType = contentType.startsWith("application/x-www-form-urlencoded")
+                ? parseForm(raw).get("grant_type")
+                : mapper.readTree(raw).path("grant_type").asText();
+        if (!"client_credentials".equals(grantType)) {
             send(exchange, 400, error("unsupported_grant_type"));
             return;
         }
-        String token = "mock-policy-token-" + UUID.randomUUID();
-        policyTokens.add(token);
+        String token = (identityApp ? "mock-token-" : "mock-policy-token-") + UUID.randomUUID();
+        (identityApp ? issuedTokens : policyTokens).add(token);
         ObjectNode response = labelled();
         response.put("access_token", token);
         response.put("token_type", "Bearer");
@@ -608,13 +635,17 @@ public final class MockCyberArkServer implements AutoCloseable {
         Matcher role = ROLE_QUERY.matcher(script);
         Matcher roleById = ROLE_BY_ID_QUERY.matcher(script);
         Matcher user = USER_QUERY.matcher(script);
+        List<String> columns = selectedColumns(script);
+        int pageNumber = args.path("PageNumber").asInt(0);
+        int pageSize = args.path("PageSize").asInt(0);
         if (role.find()) {
-            redrockRoles(exchange, unquote(role.group(1)), args.path("PageNumber").asInt(0),
-                    args.path("PageSize").asInt(0));
+            redrockRoles(exchange, unquote(role.group(1)), pageNumber, pageSize, columns);
         } else if (roleById.find()) {
-            redrockRoleById(exchange, unquote(roleById.group(1)));
+            redrockRoleById(exchange, unquote(roleById.group(1)), columns);
         } else if (user.find()) {
-            redrockUser(exchange, unquote(user.group(1)));
+            redrockUser(exchange, unquote(user.group(1)), columns);
+        } else if (USER_TABLE_QUERY.matcher(script).find()) {
+            redrockUsers(exchange, pageNumber, pageSize, columns);
         } else {
             count("redrock-other");
             if (authorized(exchange)) {
@@ -628,8 +659,8 @@ public final class MockCyberArkServer implements AutoCloseable {
      * everything), {@code Count} = rows on this page, {@code FullCount} = all matching roles. Faults: WRONG_COUNT
      * reports a FullCount one higher; IGNORE_OFFSET always serves the first page.
      */
-    private void redrockRoles(HttpExchange exchange, String likePattern, int pageNumber, int pageSize)
-            throws IOException {
+    private void redrockRoles(HttpExchange exchange, String likePattern, int pageNumber, int pageSize,
+                              List<String> columns) throws IOException {
         count(REDROCK_ROLE);
         Fault fault = faults.get(REDROCK_ROLE);
         if (!authorized(exchange)
@@ -651,24 +682,98 @@ public final class MockCyberArkServer implements AutoCloseable {
             from = Math.min((page - 1) * pageSize, matching.size());
             to = Math.min(from + pageSize, matching.size());
         }
-        ArrayNode results = mapper.createArrayNode();
-        matching.subList(from, to).forEach(r -> results.addObject().set("Row", r));
+        ArrayNode results = rows(exchange, matching.subList(from, to), columns);
+        if (results == null) {
+            return;
+        }
         ObjectNode body = success(results);
         ((ObjectNode) body.get("Result")).put("FullCount", matching.size() + (fault == Fault.WRONG_COUNT ? 1 : 0));
         send(exchange, 200, body);
     }
 
-    private void redrockRoleById(HttpExchange exchange, String roleId) throws IOException {
+    /**
+     * {@code SELECT .. FROM User} without an id filter: every user, 1-based paging as for roles. Only the selected
+     * columns are returned.
+     */
+    private void redrockUsers(HttpExchange exchange, int pageNumber, int pageSize, List<String> columns)
+            throws IOException {
+        count(REDROCK_USERS);
+        if (!authorized(exchange) || applyFault(exchange, REDROCK_USERS)) {
+            return;
+        }
+        List<ObjectNode> all = new java.util.ArrayList<>();
+        data.users.values().forEach(u -> all.add(userRow(u)));
+        all.sort(java.util.Comparator.comparing(n -> n.get("ID").asText()));
+        int from = 0;
+        int to = all.size();
+        if (pageSize > 0) {
+            from = Math.min((Math.max(pageNumber, 1) - 1) * pageSize, all.size());
+            to = Math.min(from + pageSize, all.size());
+        }
+        ArrayNode results = rows(exchange, all.subList(from, to), columns);
+        if (results == null) {
+            return;
+        }
+        ObjectNode body = success(results);
+        ((ObjectNode) body.get("Result")).put("FullCount", all.size());
+        send(exchange, 200, body);
+    }
+
+    /** The columns of {@code SELECT a, b FROM ..}, or {@code null} for {@code SELECT *} (all columns). */
+    static List<String> selectedColumns(String script) {
+        Matcher m = SELECT_LIST.matcher(script);
+        if (!m.find() || m.group(1).trim().equals("*")) {
+            return null;
+        }
+        List<String> columns = new java.util.ArrayList<>();
+        for (String c : m.group(1).split(",")) {
+            columns.add(c.trim());
+        }
+        return columns;
+    }
+
+    /**
+     * The rows as {@code Results} items, each with only the selected columns in the selected order. A column the
+     * table does not have is answered like Redrock's documented failure ({@code success: false}, "Query has failed:
+     * ..."), and {@code null} is returned.
+     */
+    private ArrayNode rows(HttpExchange exchange, List<ObjectNode> rows, List<String> columns) throws IOException {
+        ArrayNode results = mapper.createArrayNode();
+        for (ObjectNode row : rows) {
+            ObjectNode out = row;
+            if (columns != null) {
+                out = mapper.createObjectNode();
+                for (String column : columns) {
+                    String field = null;
+                    for (java.util.Iterator<String> it = row.fieldNames(); it.hasNext(); ) {
+                        String name = it.next();
+                        if (name.equalsIgnoreCase(column)) {
+                            field = name;
+                        }
+                    }
+                    if (field == null) {
+                        send(exchange, 200, failure("Query has failed: no such column: " + column));
+                        return null;
+                    }
+                    out.set(field, row.get(field));
+                }
+            }
+            results.addObject().set("Row", out);
+        }
+        return results;
+    }
+
+    private void redrockRoleById(HttpExchange exchange, String roleId, List<String> columns) throws IOException {
         count(REDROCK_ROLE_BY_ID);
         if (!authorized(exchange) || applyFault(exchange, REDROCK_ROLE_BY_ID)) {
             return;
         }
-        ArrayNode results = mapper.createArrayNode();
         MockDataset.RoleRow row = data.roles.get(roleId);
-        if (row != null && !data.hiddenRoles.contains(roleId)) {
-            results.addObject().set("Row", roleRow(row));
+        ArrayNode results = rows(exchange, row != null && !data.hiddenRoles.contains(roleId)
+                ? List.of(roleRow(row)) : List.of(), columns);
+        if (results != null) {
+            send(exchange, 200, success(results));
         }
-        send(exchange, 200, success(results));
     }
 
     /** A Role table row with the documented columns. */
@@ -682,25 +787,29 @@ public final class MockCyberArkServer implements AutoCloseable {
         return r;
     }
 
-    private void redrockUser(HttpExchange exchange, String userId) throws IOException {
+    private void redrockUser(HttpExchange exchange, String userId, List<String> columns) throws IOException {
         count(REDROCK_USER);
         if (!authorized(exchange) || applyFault(exchange, REDROCK_USER)) {
             return;
         }
-        ArrayNode results = mapper.createArrayNode();
         MockDataset.UserRow user = data.users.get(userId);
-        if (user != null) {
-            ObjectNode r = mapper.createObjectNode();
-            r.put("ID", user.id());
-            r.put("Username", user.username());
-            r.put("DisplayName", user.displayName());
-            r.put("Email", user.email());
-            r.put("LastLogin", user.lastLogin());
-            r.put("Status", user.status());
-            r.put("StatusEnum", user.statusEnum());
-            results.addObject().set("Row", r);
+        ArrayNode results = rows(exchange, user != null ? List.of(userRow(user)) : List.of(), columns);
+        if (results != null) {
+            send(exchange, 200, success(results));
         }
-        send(exchange, 200, success(results));
+    }
+
+    /** A User table row with the documented columns used here. */
+    private ObjectNode userRow(MockDataset.UserRow user) {
+        ObjectNode r = mapper.createObjectNode();
+        r.put("ID", user.id());
+        r.put("Username", user.username());
+        r.put("DisplayName", user.displayName());
+        r.put("Email", user.email());
+        r.put("LastLogin", user.lastLogin());
+        r.put("Status", user.status());
+        r.put("StatusEnum", user.statusEnum());
+        return r;
     }
 
     private void getRole(HttpExchange exchange) throws IOException {
@@ -723,8 +832,15 @@ public final class MockCyberArkServer implements AutoCloseable {
         result.put("Description", row.description());
         result.put("RoleType", "PrincipalList");
         result.put("ReadOnly", false);
+        // Roles API OpenAPI: "Each principal is of the form t=id, where 't' is one of 'u' (user), 'g' (group), or
+        // 'r' (role) and 'id' is the principal name."
         ArrayNode principals = result.putArray("Principals");
-        data.members.getOrDefault(row.id(), List.of()).forEach(m -> principals.add(m.guid()));
+        data.members.getOrDefault(row.id(), List.of()).forEach(m -> principals.add(
+                switch (String.valueOf(m.type()).toLowerCase(java.util.Locale.ROOT)) {
+                    case "group" -> "g=";
+                    case "role" -> "r=";
+                    default -> "u=";
+                } + m.name()));
         body.putNull("Message");
         send(exchange, 200, body);
     }
@@ -803,8 +919,16 @@ public final class MockCyberArkServer implements AutoCloseable {
         return true;
     }
 
+    /** The raw query string of each UAP policies request, so tests can check what was sent. */
+    private final List<String> policyQueries = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public List<String> policyQueries() {
+        return policyQueries;
+    }
+
     private void policies(HttpExchange exchange) throws IOException {
         count(POLICIES);
+        policyQueries.add(String.valueOf(exchange.getRequestURI().getRawQuery()));
         if (!policyAuthorized(exchange)) {
             return;
         }
@@ -964,6 +1088,14 @@ public final class MockCyberArkServer implements AutoCloseable {
             case SUCCESS_FALSE -> send(exchange, 200, failure("MOCK: injected success=false"));
             case MALFORMED_JSON -> sendRaw(exchange, 200, "{ this is not json");
             case REPEAT_NEXT_TOKEN -> {
+                return false;
+            }
+            case DELAY -> {
+                try {
+                    Thread.sleep(DELAY_MILLIS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
                 return false;
             }
         }

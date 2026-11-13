@@ -21,13 +21,24 @@ public class CyberArkApiException extends RuntimeException {
     private final Kind kind;
     private final String endpoint;
     private final Integer httpStatus;
+    private final String responseBody;
 
     public CyberArkApiException(Kind kind, String endpoint, Integer httpStatus, String message, Throwable cause) {
+        this(kind, endpoint, httpStatus, message, cause, null);
+    }
+
+    /**
+     * @param responseBody the body CyberArk answered with, unmodified, or {@code null}. It is never part of the
+     *                     message; callers that show it must mask the credentials and tokens they know first
+     */
+    public CyberArkApiException(Kind kind, String endpoint, Integer httpStatus, String message, Throwable cause,
+                                String responseBody) {
         super("[" + kind + "] " + endpoint + (httpStatus == null ? "" : " (HTTP " + httpStatus + ")") + ": " + message,
                 cause);
         this.kind = kind;
         this.endpoint = endpoint;
         this.httpStatus = httpStatus;
+        this.responseBody = responseBody;
     }
 
     public CyberArkApiException(Kind kind, String endpoint, Integer httpStatus, String message) {
@@ -44,5 +55,10 @@ public class CyberArkApiException extends RuntimeException {
 
     public Integer httpStatus() {
         return httpStatus;
+    }
+
+    /** CyberArk's response body, unmodified (unmasked), or {@code null}. */
+    public String responseBody() {
+        return responseBody;
     }
 }

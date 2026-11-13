@@ -90,4 +90,50 @@ class CyberArkConfigTest {
         env.put(CyberArkConfig.ENV_TIMEOUT_SECONDS, "0");
         assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(env));
     }
+
+    @Test
+    void identityLoginDefaultsToThePlatformTokenAndRedrockGetsTheLongerTimeout() {
+        CyberArkConfig config = CyberArkConfig.fromEnvironment(validEnv());
+
+        assertEquals(CyberArkConfig.AuthMethod.PLATFORM, config.authMethod());
+        assertEquals(CyberArkConfig.DEFAULT_REDROCK_TIMEOUT, config.redrockTimeout());
+        assertEquals(Duration.ofSeconds(130), config.redrockTimeout());
+    }
+
+    @Test
+    void theOauth2AppLoginBuildsItsTokenUrlFromTheAppId() {
+        Map<String, String> env = validEnv();
+        env.put(CyberArkConfig.ENV_IDENTITY_AUTH, "oauth2-app");
+        env.put(CyberArkConfig.ENV_IDENTITY_APP_ID, "identityapi");
+        env.put(CyberArkConfig.ENV_IDENTITY_SCOPE, "reporting");
+        env.put(CyberArkConfig.ENV_IDENTITY_TOKEN_BODY, "JSON");
+        env.put(CyberArkConfig.ENV_REDROCK_TIMEOUT_SECONDS, "200");
+
+        CyberArkConfig config = CyberArkConfig.fromEnvironment(env);
+
+        assertEquals(CyberArkConfig.AuthMethod.OAUTH2_APP, config.authMethod());
+        assertEquals("https://tenant.id.cyberark.cloud/oauth2/token/identityapi", config.tokenUrl().toString());
+        assertEquals("reporting", config.tokenScope());
+        assertEquals(CyberArkConfig.TokenBody.JSON, config.tokenBody());
+        assertEquals(Duration.ofSeconds(200), config.redrockTimeout());
+    }
+
+    @Test
+    void theOauth2AppLoginNeedsAnAppIdOrTokenUrlAndValidValues() {
+        Map<String, String> env = validEnv();
+        env.put(CyberArkConfig.ENV_IDENTITY_AUTH, "oauth2-app");
+        ConfigException e = assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(env));
+        assertTrue(e.getMessage().contains(CyberArkConfig.ENV_IDENTITY_APP_ID), e.getMessage());
+
+        env.put(CyberArkConfig.ENV_TOKEN_URL, "https://tenant.id.cyberark.cloud/oauth2/token/x");
+        assertEquals("https://tenant.id.cyberark.cloud/oauth2/token/x",
+                CyberArkConfig.fromEnvironment(env).tokenUrl().toString());
+
+        Map<String, String> bad = validEnv();
+        bad.put(CyberArkConfig.ENV_IDENTITY_AUTH, "other");
+        assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(bad));
+        Map<String, String> badBody = validEnv();
+        badBody.put(CyberArkConfig.ENV_IDENTITY_TOKEN_BODY, "xml");
+        assertThrows(ConfigException.class, () -> CyberArkConfig.fromEnvironment(badBody));
+    }
 }

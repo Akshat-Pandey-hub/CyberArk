@@ -16,6 +16,7 @@ import com.keyforge.cyberarkpoc.config.PvwaConfig;
 import com.keyforge.cyberarkpoc.extract.ExtractionSettings;
 import com.keyforge.cyberarkpoc.mock.MockCyberArkServer;
 import com.keyforge.cyberarkpoc.mock.SampleData;
+import com.keyforge.cyberarkpoc.rest.CloudRoutes;
 import com.keyforge.cyberarkpoc.rest.ExtractionRestServer;
 import com.keyforge.cyberarkpoc.store.DbConfig;
 
@@ -60,6 +61,7 @@ public final class Main {
             case "pvwa-discovered-accounts" -> System.exit(runPvwaRoute("pvwa/discovered-accounts", false));
             case ApproverGroupRun.COMMAND -> System.exit(runStandalone(APPROVER_GROUPS_ROUTE, approverGroupsRoute()));
             case PolicyHealthRun.COMMAND -> System.exit(runStandalone(POLICY_HEALTH_ROUTE, policyHealthRoute()));
+            case "cloud-token", "cloud-redrock", "cloud-role", "cloud-policies" -> System.exit(runCloud(args));
             case "start-rest" -> runRest();
             default -> {
                 usage();
@@ -213,6 +215,36 @@ public final class Main {
         };
     }
 
+    /**
+     * CLI for the cloud pass-through routes: {@code cloud-redrock pageNumber=1 pageSize=2}, i.e. the REST query
+     * parameters as {@code name=value} arguments. Exit 0 when CyberArk answered successfully, 2 for a configuration
+     * error or bad argument, 1 otherwise. The JSON envelope is printed.
+     */
+    static int runCloud(String[] args) {
+        String name = args[0].replaceFirst("^cloud-", "cloud/");
+        Map<String, String> params = new java.util.LinkedHashMap<>();
+        for (int i = 1; i < args.length; i++) {
+            int eq = args[i].indexOf('=');
+            if (eq <= 0) {
+                System.err.println("Arguments must be name=value, e.g. pageNumber=1, but got: " + args[i]);
+                return 2;
+            }
+            params.put(args[i].substring(0, eq), args[i].substring(eq + 1));
+        }
+        Map<String, Object> result = ExtractionRestServer.run(name,
+                CloudRoutes.routes(System::getenv).get(name), params);
+        try {
+            System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(result));
+        } catch (IOException e) {
+            System.out.println(result);
+        }
+        return switch (String.valueOf(result.get("status"))) {
+            case "SUCCESS" -> 0;
+            case "CONFIG_ERROR", "BAD_REQUEST" -> 2;
+            default -> 1;
+        };
+    }
+
     private static void runRest() throws IOException, InterruptedException {
         ExtractionRestServer.Settings settings;
         try {
@@ -237,8 +269,9 @@ public final class Main {
         Map<String, ExtractionRestServer.StandaloneRoute> standalone = new java.util.LinkedHashMap<>();
         standalone.put(APPROVER_GROUPS_ROUTE, approverGroupsRoute());
         standalone.put(POLICY_HEALTH_ROUTE, policyHealthRoute());
+        Map<String, ExtractionRestServer.QueryRoute> cloud = CloudRoutes.routes(System::getenv);
         ExtractionRestServer rest = new ExtractionRestServer(settings,
-                () -> new PvwaClient(PvwaConfig.fromEnvironment(System.getenv())), routes, standalone);
+                () -> new PvwaClient(PvwaConfig.fromEnvironment(System.getenv())), routes, standalone, cloud);
         rest.start();
         System.out.println("[rest] listening on http://" + settings.host() + ":" + rest.port()
                 + ExtractionRestServer.BASE_PATH + "/<route>  (HTTP Basic Auth with REST_USERNAME / REST_PASSWORD; "
@@ -246,6 +279,8 @@ public final class Main {
         routes.forEach((k, v) -> System.out.println("  GET "
                 + ExtractionRestServer.BASE_PATH + "/" + k + "  - " + v.description()));
         standalone.forEach((k, v) -> System.out.println("  GET "
+                + ExtractionRestServer.BASE_PATH + "/" + k + "  - " + v.description()));
+        cloud.forEach((k, v) -> System.out.println("  GET "
                 + ExtractionRestServer.BASE_PATH + "/" + k + "  - " + v.description()));
         CountDownLatch stop = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -283,6 +318,13 @@ public final class Main {
                 + "(CYBERARK_IDENTITY_BASE_URL, CYBERARK_CLIENT_ID/SECRET + PG_* env vars)");
         System.err.println("  java -jar cyberark-poc.jar " + PolicyHealthRun.COMMAND + " use case 2: policies in Error "
                 + "or Warning (CYBERARK_POLICY_* / CYBERARK_UAP_BASE_URL or CYBERARK_SCA_BASE_URL + PG_* env vars)");
+        System.err.println("  java -jar cyberark-poc.jar cloud-token [target=identity|policies]   login test");
+        System.err.println("  java -jar cyberark-poc.jar cloud-redrock \"script=SELECT ...\" pageNumber=1 pageSize=2   one "
+                + "Redrock page of the given query, "
+                + "CyberArk's response as received");
+        System.err.println("  java -jar cyberark-poc.jar cloud-role id=<role UUID>   Roles/GetRole");
+        System.err.println("  java -jar cyberark-poc.jar cloud-policies limit=2 [nextToken=.. filter=.. q=.. sort=..]   one UAP "
+                + "policies page");
         System.err.println("  java -jar cyberark-poc.jar start-rest   start the extraction REST service "
                 + "(REST_* + CYBERARK_PVWA_* + PG_* env vars)");
     }

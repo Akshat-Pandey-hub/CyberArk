@@ -108,4 +108,18 @@ class PolicyConfigTest {
         assertFalse(text.contains("p0licy-secret"));
         assertTrue(text.contains("clientSecret=***"));
     }
+
+    @Test
+    void theTokenBodyDefaultsToJsonAndScopeAndFormCanBeSet() {
+        PolicyConfig defaults = PolicyConfig.fromEnvironment(validEnv());
+        assertEquals(CyberArkConfig.TokenBody.JSON, defaults.tokenBody());
+        assertEquals(null, defaults.tokenScope());
+
+        Map<String, String> env = validEnv();
+        env.put(PolicyConfig.ENV_POLICY_TOKEN_BODY, "form");
+        env.put(PolicyConfig.ENV_POLICY_SCOPE, "sca");
+        PolicyConfig config = PolicyConfig.fromEnvironment(env);
+        assertEquals(CyberArkConfig.TokenBody.FORM, config.tokenBody());
+        assertEquals("sca", config.tokenScope());
+    }
 }

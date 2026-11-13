@@ -2,6 +2,7 @@ D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\Approve
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\ApproverGroupRunTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\PolicyHealthCheckTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\check\PolicyHealthRunTest.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\CloudApiTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\CyberArkClientTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\ErrorSanitizerTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\client\OfficialExamplesContractTest.java
@@ -24,6 +25,7 @@ D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\extract\Users
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\MainCliTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\mock\MockCyberArkServerTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\MockFixture.java
+D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\rest\CloudRoutesTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\rest\ExtractionRestServerTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\rest\RestFailureHandlingTest.java
 D:\cyberark-integration-poc\src\test\java\com\keyforge\cyberarkpoc\store\GenericStorePostgresTest.java

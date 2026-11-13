@@ -24,6 +24,9 @@ import java.util.Map;
  * @param clientSecret its password
  * @param pageSize     {@code limit} per page (UAP only; documented maximum 50)
  * @param maxPages     safety stop for the UAP paging
+ * @param tokenScope   {@code scope} sent in the token request, or {@code null} to send none (the SCA reference sends
+ *                     none; the app's scope is configured on the app)
+ * @param tokenBody    token request body: JSON as in the SCA API reference (the default), or form
  */
 public record PolicyConfig(
         Api api,
@@ -33,7 +36,9 @@ public record PolicyConfig(
         String clientSecret,
         int pageSize,
         int maxPages,
-        Duration requestTimeout) {
+        Duration requestTimeout,
+        String tokenScope,
+        CyberArkConfig.TokenBody tokenBody) {
 
     public enum Api { UAP, SCA }
 
@@ -45,11 +50,20 @@ public record PolicyConfig(
     public static final String ENV_POLICY_CLIENT_ID = "CYBERARK_POLICY_CLIENT_ID";
     public static final String ENV_POLICY_CLIENT_SECRET = "CYBERARK_POLICY_CLIENT_SECRET";
     public static final String ENV_POLICY_PAGE_SIZE = "CYBERARK_POLICY_PAGE_SIZE";
+    public static final String ENV_POLICY_SCOPE = "CYBERARK_POLICY_SCOPE";
+    public static final String ENV_POLICY_TOKEN_BODY = "CYBERARK_POLICY_TOKEN_BODY";
 
     /** Documented: {@code limit} "You can request up to 50 policies", default 10. */
     public static final int MAX_PAGE_SIZE = 50;
     public static final int DEFAULT_MAX_PAGES = 10_000;
     public static final String TOKEN_PATH = "/oauth2/token/";
+
+    /** JSON token body without a scope, as in the SCA API reference. */
+    public PolicyConfig(Api api, URI baseUrl, URI tokenUrl, String clientId, String clientSecret, int pageSize,
+                        int maxPages, Duration requestTimeout) {
+        this(api, baseUrl, tokenUrl, clientId, clientSecret, pageSize, maxPages, requestTimeout, null,
+                CyberArkConfig.TokenBody.JSON);
+    }
 
     public PolicyConfig {
         if (api == null) {
@@ -66,6 +80,8 @@ public record PolicyConfig(
             throw new ConfigException("maxPages must be at least 1");
         }
         requestTimeout = requestTimeout == null ? CyberArkConfig.DEFAULT_TIMEOUT : requestTimeout;
+        tokenScope = tokenScope == null || tokenScope.isBlank() ? null : tokenScope.trim();
+        tokenBody = tokenBody == null ? CyberArkConfig.TokenBody.JSON : tokenBody;
     }
 
     /**
@@ -88,12 +104,7 @@ public record PolicyConfig(
                 throw new ConfigException("set " + ENV_POLICY_TOKEN_URL + ", or " + CyberArkConfig.ENV_IDENTITY_BASE_URL
                         + " and " + ENV_POLICY_APP_ID + " (the custom OAuth2 server's Application ID)");
             }
-            if (!appId.trim().matches("[A-Za-z0-9._~-]+")) {
-                throw new ConfigException(ENV_POLICY_APP_ID + " may only contain letters, digits and . _ ~ -");
-            }
-            String root = identity.trim().endsWith("/") ? identity.trim().substring(0, identity.trim().length() - 1)
-                    : identity.trim();
-            tokenUrl = CyberArkConfig.parseUri(CyberArkConfig.ENV_IDENTITY_BASE_URL, root + TOKEN_PATH + appId.trim());
+            tokenUrl = CyberArkConfig.appTokenUrl(ENV_POLICY_APP_ID, identity, appId);
         }
         return new PolicyConfig(
                 api,
@@ -103,7 +114,10 @@ public record PolicyConfig(
                 firstSet(env, ENV_POLICY_CLIENT_SECRET, CyberArkConfig.ENV_CLIENT_SECRET),
                 pageSize(env.get(ENV_POLICY_PAGE_SIZE)),
                 DEFAULT_MAX_PAGES,
-                CyberArkConfig.timeout(env));
+                CyberArkConfig.timeout(env),
+                env.get(ENV_POLICY_SCOPE),
+                CyberArkConfig.tokenBody(ENV_POLICY_TOKEN_BODY, env.get(ENV_POLICY_TOKEN_BODY),
+                        CyberArkConfig.TokenBody.JSON));
     }
 
     public static String baseUrlVariable(Api api) {
@@ -114,7 +128,8 @@ public record PolicyConfig(
     @Override
     public String toString() {
         return "PolicyConfig[api=" + api + ", baseUrl=" + baseUrl + ", tokenUrl=" + tokenUrl + ", clientId=" + clientId
-                + ", clientSecret=***, pageSize=" + pageSize + ", requestTimeout=" + requestTimeout + "]";
+                + ", clientSecret=***, pageSize=" + pageSize + ", requestTimeout=" + requestTimeout + ", tokenBody=" + tokenBody
+                + "]";
     }
 
     private static Api api(String value) {

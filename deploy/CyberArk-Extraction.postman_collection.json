@@ -31,6 +31,42 @@
     {
       "key": "restPassword",
       "value": ""
+    },
+    {
+      "key": "roleId",
+      "value": ""
+    },
+    {
+      "key": "nextToken",
+      "value": ""
+    },
+    {
+      "key": "nextTokenEncoded",
+      "value": ""
+    },
+    {
+      "key": "redrockPage1Ids",
+      "value": ""
+    },
+    {
+      "key": "policyPage1Ids",
+      "value": ""
+    },
+    {
+      "key": "redrockScript",
+      "value": "SELECT ID, Name, RoleType, ReadOnly, Description FROM Role WHERE Name LIKE 'APP-CYA-ISPSS-SCA-AWS-%-BUApprovers' ORDER BY ID"
+    },
+    {
+      "key": "redrockScriptEncoded",
+      "value": ""
+    },
+    {
+      "key": "policyQ",
+      "value": "MOCK"
+    },
+    {
+      "key": "policyQEncoded",
+      "value": ""
     }
   ],
   "event": [
@@ -159,6 +195,197 @@
         "method": "GET",
         "url": "{{baseUrl}}/ispss/policy-health",
         "description": "Every SCA/SIA access policy with outcome FINDING (Error/Warning), NO_FINDING or CANNOT_VERIFY; stored in uap_policy and uap_policy_health_result. health is ALL_HEALTHY only after a complete retrieval."
+      }
+    },
+    {
+      "name": "Cloud 1 - Login test (Identity)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/token?target=identity",
+        "description": "Requests a token with CYBERARK_IDENTITY_AUTH (platform or oauth2-app). Shows CyberArk's answer; the token itself is replaced by ***."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('token never returned', () => pm.expect(pm.response.json().response.access_token).to.eql('***'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 2 - Login test (policies)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/token?target=policies",
+        "description": "Requests the custom OAuth2 token for the policy API (CYBERARK_POLICY_*)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('token never returned', () => pm.expect(pm.response.json().response.access_token).to.eql('***'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 3 - Redrock page 1",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/redrock?script={{redrockScriptEncoded}}&pageNumber=1&pageSize=2",
+        "description": "POST <identity>/Redrock/query with the query in the collection variable 'redrockScript' (any table, columns, filter, sort), sent unchanged, plus PageNumber/PageSize. CyberArk's response is under 'response', unchanged. Leave out script= to use the configured default."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('redrockScriptEncoded', encodeURIComponent(pm.collectionVariables.get('redrockScript')));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rows = pm.response.json().response.Result.Results;",
+              "pm.test('at most pageSize rows', () => pm.expect(rows.length).to.be.at.most(2));",
+              "pm.collectionVariables.set('redrockPage1Ids', JSON.stringify(rows.map(r => r.Row.ID)));",
+              "if (rows.length > 0) { pm.collectionVariables.set('roleId', rows[0].Row.ID); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 4 - Redrock page 2",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/redrock?script={{redrockScriptEncoded}}&pageNumber=2&pageSize=2",
+        "description": "POST <identity>/Redrock/query with the query in the collection variable 'redrockScript' (any table, columns, filter, sort), sent unchanged, plus PageNumber/PageSize. CyberArk's response is under 'response', unchanged. Leave out script= to use the configured default."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('redrockScriptEncoded', encodeURIComponent(pm.collectionVariables.get('redrockScript')));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const rows = pm.response.json().response.Result.Results;",
+              "const first = JSON.parse(pm.collectionVariables.get('redrockPage1Ids') || '[]');",
+              "pm.test('no row repeated from page 1', () => rows.forEach(r => pm.expect(first).to.not.include(r.Row.ID)));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 5 - GetRole",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/role?id={{roleId}}",
+        "description": "POST <identity>/Roles/GetRole?Name=<role UUID>; the UUID is taken from Redrock page 1."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('the role asked for', () => pm.expect(pm.response.json().response.Result.Uuid).to.eql(pm.collectionVariables.get('roleId')));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 6 - Policies page 1",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/policies?limit=2",
+        "description": "GET <uap>/policies?limit=2. Optional documented parameters can be added: filter, q, sort (e.g. &q=access%20to%20production&sort=createdBy). The nextToken CyberArk returns is kept for the next request."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const r = pm.response.json().response;",
+              "pm.test('at most limit policies', () => pm.expect(r.results.length).to.be.at.most(2));",
+              "pm.collectionVariables.set('policyPage1Ids', JSON.stringify(r.results.map(p => p.metadata.policyId)));",
+              "pm.collectionVariables.set('nextToken', r.nextToken || '');"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 7 - Policies next page",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/policies?limit=2&nextToken={{nextTokenEncoded}}",
+        "description": "The same request with the nextToken from page 1, passed back unchanged (URL-encoded)."
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const t = pm.collectionVariables.get('nextToken');",
+              "if (!t) { console.log('No nextToken: page 1 was the last page.'); pm.execution.skipRequest(); }",
+              "pm.collectionVariables.set('nextTokenEncoded', encodeURIComponent(t || ''));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const r = pm.response.json().response;",
+              "const first = JSON.parse(pm.collectionVariables.get('policyPage1Ids') || '[]');",
+              "pm.test('a different page', () => r.results.forEach(p => pm.expect(first).to.not.include(p.metadata.policyId)));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud 8 - Policies with q and sort",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('policyQEncoded', encodeURIComponent(pm.collectionVariables.get('policyQ')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/cloud/policies?limit=2&q={{policyQEncoded}}&sort=createdBy",
+        "description": "The documented free-text search (q) and sort, passed to CyberArk unchanged."
       }
     }
   ]

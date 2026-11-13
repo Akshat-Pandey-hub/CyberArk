@@ -17,6 +17,8 @@ com\keyforge\cyberarkpoc\mock\MockCyberArkServerTest.class
 com\keyforge\cyberarkpoc\check\ApproverGroupCheckTest.class
 com\keyforge\cyberarkpoc\client\OfficialExamplesContractTest.class
 com\keyforge\cyberarkpoc\client\PvwaClientTest$TestClock.class
+com\keyforge\cyberarkpoc\client\CloudApiTest$ExtractionParams.class
+com\keyforge\cyberarkpoc\client\CloudApiTest.class
 com\keyforge\cyberarkpoc\client\PolicyClientTest.class
 com\keyforge\cyberarkpoc\extract\PlatformDetailsExtractionTest.class
 com\keyforge\cyberarkpoc\check\PolicyHealthCheckTest.class
@@ -27,6 +29,7 @@ com\keyforge\cyberarkpoc\extract\OffsetPagerTest.class
 com\keyforge\cyberarkpoc\client\ErrorSanitizerTest.class
 com\keyforge\cyberarkpoc\client\PvwaClientTest.class
 com\keyforge\cyberarkpoc\MockFixture.class
+com\keyforge\cyberarkpoc\rest\CloudRoutesTest.class
 com\keyforge\cyberarkpoc\client\SecretRedactorTest.class
 com\keyforge\cyberarkpoc\extract\TargetPlatformsExtractionTest.class
 com\keyforge\cyberarkpoc\client\ResponseParsingTest.class

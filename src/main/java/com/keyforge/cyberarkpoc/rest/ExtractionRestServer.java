@@ -83,6 +83,7 @@ public final class ExtractionRestServer {
         return switch (status.toString()) {
             case "SUCCESS", "COMPLETED_WITH_FAILURES", "INCOMPLETE" -> 200;
             case "CONFIG_ERROR" -> 500;
+            case "BAD_REQUEST" -> 400;
             default -> 502;
         };
     }
@@ -129,10 +130,19 @@ public final class ExtractionRestServer {
     public record StandaloneRoute(String description, Supplier<Map<String, Object>> run) {
     }
 
+    /**
+     * A route that takes the request's query parameters (decoded), e.g. {@code cloud/redrock?pageNumber=1&pageSize=2}.
+     * {@code run} returns the whole response, including {@code status}; an {@link IllegalArgumentException} means a
+     * bad parameter (HTTP 400).
+     */
+    public record QueryRoute(String description, Function<Map<String, String>, Map<String, Object>> run) {
+    }
+
     private final Settings settings;
     private final Supplier<PvwaClient> pvwa;
     private final Map<String, Route> routes;
     private final Map<String, StandaloneRoute> standalone;
+    private final Map<String, QueryRoute> queryRoutes;
     private final AtomicBoolean busy = new AtomicBoolean();
     private HttpServer server;
     private ExecutorService executor;
@@ -144,10 +154,57 @@ public final class ExtractionRestServer {
 
     public ExtractionRestServer(Settings settings, Supplier<PvwaClient> pvwa, Map<String, Route> routes,
                                 Map<String, StandaloneRoute> standalone) {
+        this(settings, pvwa, routes, standalone, Map.of());
+    }
+
+    public ExtractionRestServer(Settings settings, Supplier<PvwaClient> pvwa, Map<String, Route> routes,
+                                Map<String, StandaloneRoute> standalone, Map<String, QueryRoute> queryRoutes) {
         this.settings = settings;
         this.pvwa = pvwa;
         this.routes = routes;
         this.standalone = standalone;
+        this.queryRoutes = queryRoutes;
+    }
+
+    /** Runs a query route; a bad parameter, a configuration error or an unexpected error still gives a JSON answer. */
+    public static Map<String, Object> run(String name, QueryRoute route, Map<String, String> params) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("route", name);
+        body.put("started_at", Instant.now().toString());
+        try {
+            body.putAll(route.run().apply(params));
+        } catch (ConfigException | IllegalStateException e) {
+            body.put("status", "CONFIG_ERROR");
+            body.put("error", ErrorSanitizer.clean(e.getMessage()));
+        } catch (IllegalArgumentException e) {
+            body.put("status", "BAD_REQUEST");
+            body.put("error", ErrorSanitizer.clean(e.getMessage()));
+        } catch (RuntimeException e) {
+            body.put("status", "FAILED");
+            body.put("error_kind", "INTERNAL");
+            body.put("error", ErrorSanitizer.clean("unexpected error: " + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage())));
+        }
+        body.put("ended_at", Instant.now().toString());
+        return body;
+    }
+
+    /** Decodes {@code a=1&b=x%3By}; a repeated name keeps its last value. */
+    public static Map<String, String> queryParams(String rawQuery) {
+        Map<String, String> params = new LinkedHashMap<>();
+        if (rawQuery == null || rawQuery.isEmpty()) {
+            return params;
+        }
+        for (String pair : rawQuery.split("&")) {
+            if (pair.isEmpty()) {
+                continue;
+            }
+            int eq = pair.indexOf('=');
+            String key = java.net.URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
+            String value = eq < 0 ? "" : java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            params.put(key, value);
+        }
+        return params;
     }
 
     /** Runs a standalone route; a configuration or unexpected error still gives a JSON answer. */
@@ -209,6 +266,7 @@ public final class ExtractionRestServer {
                 Map<String, String> list = new LinkedHashMap<>();
                 routes.forEach((k, v) -> list.put(k, v.description()));
                 standalone.forEach((k, v) -> list.put(k, v.description()));
+                queryRoutes.forEach((k, v) -> list.put(k, v.description()));
                 body.put("routes", list);
                 send(ex, 200, body);
                 return;
@@ -216,7 +274,8 @@ public final class ExtractionRestServer {
             String name = path.startsWith(BASE_PATH + "/") ? path.substring(BASE_PATH.length() + 1) : "";
             Route route = routes.get(name);
             StandaloneRoute other = standalone.get(name);
-            if (route == null && other == null) {
+            QueryRoute query = queryRoutes.get(name);
+            if (route == null && other == null && query == null) {
                 send(ex, 404, error("unknown route " + path + "; see GET " + BASE_PATH + " for the routes"));
                 return;
             }
@@ -226,7 +285,9 @@ public final class ExtractionRestServer {
             }
             Map<String, Object> result;
             try {
-                result = route != null ? execute(name, route) : run(name, other);
+                result = route != null ? execute(name, route)
+                        : other != null ? run(name, other)
+                        : run(name, query, queryParams(ex.getRequestURI().getRawQuery()));
             } finally {
                 busy.set(false);
             }
