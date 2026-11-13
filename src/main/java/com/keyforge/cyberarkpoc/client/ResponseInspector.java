@@ -94,6 +94,7 @@ final class ResponseInspector {
         Map<String, JsonNode> values = new HashMap<>();
         countPaths.forEach(p -> counts.put(p, null));
         boolean secretFound = false;
+        boolean rootDone = false;
         List<Frame> stack = new ArrayList<>();
         try (InputStream in = body.open(); JsonParser p = FACTORY.createParser(in)) {
             if (strict) {
@@ -101,6 +102,11 @@ final class ResponseInspector {
             }
             JsonToken token;
             while ((token = p.nextToken()) != null) {
+                if (rootDone) {
+                    // a JSON document is exactly one value; a second one would make the envelope invalid if copied
+                    return new Result(Outcome.NOT_JSON, "more than one JSON value in the body (the second starts at "
+                            + "byte " + p.currentTokenLocation().getByteOffset() + ")", secretFound, counts, values);
+                }
                 if (token == JsonToken.FIELD_NAME) {
                     stack.get(stack.size() - 1).field = p.currentName();
                     secretFound |= containsSecret(p.currentName(), secrets);
@@ -108,6 +114,7 @@ final class ResponseInspector {
                 }
                 if (token == JsonToken.END_OBJECT || token == JsonToken.END_ARRAY) {
                     stack.remove(stack.size() - 1);
+                    rootDone = stack.isEmpty();
                     continue;
                 }
                 // a value: work out its path (only near the top) and count it in its parent array
@@ -142,6 +149,7 @@ final class ResponseInspector {
                 if (path != null && valuePaths.contains(path)) {
                     values.put(path, scalar(p, token));
                 }
+                rootDone = stack.isEmpty(); // a scalar that is the whole document
             }
         } catch (StreamConstraintsException e) {
             return new Result(Outcome.PARSER_LIMIT, "the JSON exceeds a limit of the JSON parser of this service (not "

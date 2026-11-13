@@ -180,6 +180,12 @@ public final class ExtractionRestServer {
         } catch (IllegalArgumentException e) {
             body.put("status", "BAD_REQUEST");
             body.put("error", ErrorSanitizer.clean(e.getMessage()));
+        } catch (java.io.UncheckedIOException e) {
+            // e.g. a temporary response file could not be read: a local storage failure, not a configuration error
+            body.put("status", "FAILED");
+            body.put("error_kind", e.getCause() instanceof ResponseBody.LocalStorageException ? "LOCAL_STORAGE"
+                    : "INTERNAL");
+            body.put("error", ErrorSanitizer.clean(e.getCause().getMessage()));
         } catch (RuntimeException e) {
             body.put("status", "FAILED");
             body.put("error_kind", "INTERNAL");

@@ -376,7 +376,8 @@ public final class CloudApi {
             ResponseBody.release(out);
             out.remove("response");
             out.put("completeness", incomplete(received.body().size(), "the received body could not be processed"));
-            return finish(out, false, e instanceof ResponseBody.LocalLimitException ? "LOCAL_LIMIT" : "INTERNAL",
+            // every I/O here is on this service's own temporary file (reading it, or writing the masked copy)
+            return finish(out, false, e instanceof ResponseBody.LocalLimitException ? "LOCAL_LIMIT" : "LOCAL_STORAGE",
                     sanitize(e.getMessage()), started);
         }
         if (status < 200 || status > 299) {
@@ -467,6 +468,10 @@ public final class CloudApi {
             boolean late = watch.stop();
             if (e instanceof ResponseBody.LocalLimitException) {
                 throw new IncompleteBody(status, writer.size(), "LOCAL_LIMIT", e.getMessage(), e);
+            }
+            if (e instanceof ResponseBody.LocalStorageException && !late) {
+                throw new IncompleteBody(status, writer.size(), "LOCAL_STORAGE", e.getMessage()
+                        + " (a local disk problem of this service, not a network or CyberArk failure)", e);
             }
             if (late) {
                 throw new IncompleteBody(status, writer.size(), "TRANSPORT", "HttpTimeoutException: the whole body "
@@ -612,10 +617,10 @@ public final class CloudApi {
      * The body as {@code response_text}: a string when it is small or must be masked, otherwise the body itself,
      * written as a JSON string from its file.
      */
-    private Object textOf(ResponseBody body, Map<String, Object> out, boolean mayHoldSecret) {
+    private Object textOf(ResponseBody body, Map<String, Object> out, boolean mayHoldSecret) throws IOException {
         if (!body.spooled() || mayHoldSecret) {
             try {
-                return mask(body.text(), out);
+                return mask(body.readText(), out);
             } finally {
                 body.close();
             }
@@ -731,6 +736,16 @@ public final class CloudApi {
         }
         c.put("more_available", null);
         c.put("all_records_in_this_response", firstPage ? null : false);
+        if (limit != null && limit < pageSize) {
+            // Redrock documents Limit as "the maximum results for the specified page", while CyberArk's official SDK
+            // sends it as a cap on the total. Either way, the next PageNumber with this PageSize could start after
+            // rows this response left out (limit+1 .. pageSize of this page), so no next page is suggested.
+            c.put("basis", rows + " rows = limit (" + limit + "), which is smaller than pageSize (" + pageSize + "). "
+                    + "More rows may exist, but requesting the next pageNumber with this pageSize could skip the rows "
+                    + "between them (Limit's exact paging behaviour is not fully documented). To page without gaps, "
+                    + "send pageSize equal to the number of rows wanted and no smaller limit");
+            return;
+        }
         c.put("basis", "full page (" + rows + " rows): more rows may exist. Request the next page; a short or empty "
                 + "page means the end");
         if (pageNumber != null) {

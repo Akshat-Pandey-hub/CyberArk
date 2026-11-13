@@ -14,11 +14,13 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Reader;
+import java.io.UncheckedIOException;
 import java.lang.ref.Cleaner;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -58,7 +60,9 @@ public final class ResponseBody implements AutoCloseable {
 
     private static final Cleaner CLEANER = Cleaner.create();
     private static final Set<Path> OPEN_FILES = ConcurrentHashMap.newKeySet();
-    private static final Set<Path> SWEPT_DIRS = ConcurrentHashMap.newKeySet();
+    /** When each spool directory was last swept; a directory is swept again at most once per {@link #SWEEP_EVERY}. */
+    private static final Map<Path, Instant> LAST_SWEEP = new ConcurrentHashMap<>();
+    static final Duration SWEEP_EVERY = Duration.ofHours(1);
 
     static {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> OPEN_FILES.forEach(ResponseBody::deleteQuietly),
@@ -114,6 +118,19 @@ public final class ResponseBody implements AutoCloseable {
         }
     }
 
+    /** Writing or reading this service's own temporary file failed (local disk), as opposed to the network. */
+    public static final class LocalStorageException extends IOException {
+        LocalStorageException(String message, Throwable cause) {
+            super(message, cause);
+        }
+
+        static LocalStorageException of(String action, Path file, IOException cause) {
+            return new LocalStorageException("could not " + action + " the temporary file"
+                    + (file == null ? "" : " " + file) + ": " + cause.getClass().getSimpleName()
+                    + (cause.getMessage() == null ? "" : ": " + cause.getMessage()), cause);
+        }
+    }
+
     private final byte[] memory;
     private final Path file;
     private final long size;
@@ -136,25 +153,47 @@ public final class ResponseBody implements AutoCloseable {
         return file != null;
     }
 
+    /** Opens the body; a temporary file that cannot be opened is a {@link LocalStorageException}. */
     public InputStream open() throws IOException {
-        return memory != null ? new ByteArrayInputStream(memory) : Files.newInputStream(file);
+        if (memory != null) {
+            return new ByteArrayInputStream(memory);
+        }
+        try {
+            return Files.newInputStream(file);
+        } catch (IOException e) {
+            throw LocalStorageException.of("open", file, e);
+        }
     }
 
-    /** The body parsed as a tree (exact numbers), for in-process callers and tests; builds it in memory. */
+    /**
+     * The body parsed as a tree (exact numbers), for in-process callers and tests; builds it in memory. A failure to
+     * read the temporary file is an {@link UncheckedIOException} (never a configuration error).
+     */
     public JsonNode tree() {
         try (InputStream in = open()) {
             return CloudApi.EXACT.readTree(in);
         } catch (IOException e) {
-            throw new IllegalStateException("could not read the response: " + e.getMessage(), e);
+            throw new UncheckedIOException(e);
         }
     }
 
-    /** The body as text; builds it in memory. */
+    /** The body as text; builds it in memory. A failure to read the temporary file is an {@link UncheckedIOException}. */
     public String text() {
+        try {
+            return readText();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** The body as text; a failure to read the temporary file is a {@link LocalStorageException}. */
+    String readText() throws IOException {
         try (InputStream in = open()) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (LocalStorageException e) {
+            throw e;
         } catch (IOException e) {
-            throw new IllegalStateException("could not read the response: " + e.getMessage(), e);
+            throw LocalStorageException.of("read", file, e);
         }
     }
 
@@ -197,7 +236,32 @@ public final class ResponseBody implements AutoCloseable {
         OPEN_FILES.remove(path);
     }
 
-    /** Deletes temporary files of ours older than {@code abandonedAfter} (left by a crash); once per directory. */
+    /**
+     * Sweeps the directory unless this JVM swept it less than {@link #SWEEP_EVERY} ago, so that files left by a crash
+     * are removed while a long-running service keeps working, not only after the next restart. Returns whether it swept.
+     */
+    static boolean maybeSweep(Settings settings, Instant now) {
+        Path dir = settings.dir().toAbsolutePath();
+        boolean[] due = {false};
+        LAST_SWEEP.compute(dir, (k, last) -> {
+            if (last == null || !now.isBefore(last.plus(SWEEP_EVERY))) {
+                due[0] = true;
+                return now;
+            }
+            return last;
+        });
+        if (due[0]) {
+            sweep(settings);
+        }
+        return due[0];
+    }
+
+    /**
+     * Deletes temporary files of ours older than {@code abandonedAfter} (left by a crash): only regular files named
+     * {@value #FILE_PREFIX}*{@value #FILE_SUFFIX} directly in the configured directory (no subdirectories, links or
+     * other names). A file this JVM is still using is never deleted; another process's file only once it has not been
+     * written for {@code abandonedAfter}.
+     */
     static int sweep(Settings settings) {
         int deleted = 0;
         Path dir = settings.dir().toAbsolutePath();
@@ -208,7 +272,8 @@ public final class ResponseBody implements AutoCloseable {
         try (DirectoryStream<Path> files = Files.newDirectoryStream(dir, FILE_PREFIX + "*" + FILE_SUFFIX)) {
             for (Path f : files) {
                 try {
-                    if (!OPEN_FILES.contains(f) && Files.getLastModifiedTime(f).toInstant().isBefore(cutoff)) {
+                    if (!OPEN_FILES.contains(f) && Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)
+                            && Files.getLastModifiedTime(f, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(cutoff)) {
                         Files.deleteIfExists(f);
                         deleted++;
                     }
@@ -264,10 +329,24 @@ public final class ResponseBody implements AutoCloseable {
                 checkFreeSpace();
                 nextSpaceCheck = size + FREE_SPACE_CHECK_EVERY;
             }
-            out.write(b, off, len);
+            try {
+                out.write(b, off, len);
+            } catch (IOException e) {
+                throw LocalStorageException.of("write", file, e);
+            }
         }
 
         private void startFile() throws IOException {
+            try {
+                createFile();
+            } catch (LocalLimitException | LocalStorageException e) {
+                throw e;
+            } catch (IOException e) {
+                throw LocalStorageException.of("create", file, e);
+            }
+        }
+
+        private void createFile() throws IOException {
             Path dir = settings.dir().toAbsolutePath();
             boolean posix = FileSystems.getDefault().supportedFileAttributeViews().contains("posix");
             if (!Files.isDirectory(dir)) {
@@ -278,9 +357,7 @@ public final class ResponseBody implements AutoCloseable {
                     Files.createDirectories(dir);
                 }
             }
-            if (SWEPT_DIRS.add(dir)) {
-                sweep(settings);
-            }
+            maybeSweep(settings, Instant.now());
             checkFreeSpace();
             FileAttribute<?>[] attrs = posix ? new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(
                     PosixFilePermissions.fromString("rw-------"))} : new FileAttribute<?>[0];
@@ -292,7 +369,12 @@ public final class ResponseBody implements AutoCloseable {
         }
 
         private void checkFreeSpace() throws IOException {
-            long free = Files.getFileStore(settings.dir().toAbsolutePath()).getUsableSpace();
+            long free;
+            try {
+                free = Files.getFileStore(settings.dir().toAbsolutePath()).getUsableSpace();
+            } catch (IOException e) {
+                throw LocalStorageException.of("check the free space for", file, e);
+            }
             if (free - FREE_SPACE_CHECK_EVERY < settings.minFreeBytes()) {
                 throw new LocalLimitException("free disk space in " + settings.dir().toAbsolutePath()
                         + " is down to " + mb(free) + " MB, below the reserve of " + mb(settings.minFreeBytes())
@@ -304,7 +386,11 @@ public final class ResponseBody implements AutoCloseable {
         /** The finished body; after this, closing the writer no longer deletes anything. */
         ResponseBody finish() throws IOException {
             if (out != null) {
-                out.close();
+                try {
+                    out.close();
+                } catch (IOException e) {
+                    throw LocalStorageException.of("write", file, e);
+                }
             }
             finished = true;
             if (file == null) {

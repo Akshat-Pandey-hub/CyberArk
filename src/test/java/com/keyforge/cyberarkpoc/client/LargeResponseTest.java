@@ -465,4 +465,137 @@ class LargeResponseTest {
         assertTrue(output.contains("RESULT ok=4 threads=4"), output);
         assertTrue(output.contains("filesLeft=0"), output);
     }
+
+    // ---- regression tests for the review findings -----------------------------------------------
+
+    private Map<String, Object> redrockReply(String body, Integer pageNumber, Integer pageSize, Integer limit) {
+        try (StubHttpServer stub = new StubHttpServer().reply("/api/oauth2/platformtoken", 200, TOKEN_REPLY)
+                .reply("/api/Redrock/query", 200, body)) {
+            return stubApi(stub.rootUrl(), null).redrock(SCRIPT, pageNumber, pageSize, limit, -1);
+        }
+    }
+
+    private static String rows(int n, int fullCount) {
+        return "{\"success\":true,\"Result\":{\"FullCount\":" + fullCount + ",\"Results\":["
+                + String.join(",", java.util.Collections.nCopies(n, "{\"Row\":{\"ID\":\"x\"}}")) + "]}}";
+    }
+
+    @Test
+    void twoJsonValuesInOneBodyAreNotJsonAndTheEnvelopeStaysValid() throws Exception {
+        Map<String, Object> out = redrockReply("{\"success\":true,\"Result\":{\"Results\":[]}} {\"x\":1}", 1, 10, null);
+
+        assertEquals(false, out.get("ok"));
+        assertEquals("INVALID_RESPONSE", out.get("error_kind"));
+        assertFalse(out.containsKey("response"));
+        assertEquals("{\"success\":true,\"Result\":{\"Results\":[]}} {\"x\":1}", out.get("response_text"),
+                "kept whole, as text");
+        assertEquals(false, MAPPER.readTree(MAPPER.writeValueAsString(out)).isMissingNode(), "valid envelope");
+        assertNull(completeness(out).get("records_in_response"));
+
+        Map<String, Object> scalars = redrockReply("1 2", 1, 10, null);
+        assertEquals("INVALID_RESPONSE", scalars.get("error_kind"));
+
+        Map<String, Object> trailingSpace = redrockReply(rows(1, 1) + "\r\n  ", 1, 10, null);
+        assertEquals(true, trailingSpace.get("ok"), "whitespace after the one value is fine");
+    }
+
+    @Test
+    void aLimitBelowPageSizeNeverSuggestsANextPageThatCouldSkipRows() {
+        Map<String, Object> full = completeness(redrockReply(rows(10, 100), 1, 100, 10));
+        assertEquals(10L, full.get("records_in_response"));
+        assertNull(full.get("more_available"));
+        assertNull(full.get("next_request"), "pageNumber 2 with pageSize 100 would skip rows 11-100");
+        assertTrue(String.valueOf(full.get("basis")).contains("could skip"));
+
+        Map<String, Object> shortPage = completeness(redrockReply(rows(4, 4), 1, 100, 10));
+        assertEquals(false, shortPage.get("more_available"), "fewer rows than the limit: the end either way");
+
+        Map<String, Object> limitAbove = completeness(redrockReply(rows(10, 100), 1, 10, 50));
+        assertEquals(Map.of("pageNumber", 2, "pageSize", 10, "limit", 50), limitAbove.get("next_request"),
+                "a limit at or above pageSize cannot skip rows");
+    }
+
+    @Test
+    void aLocalDiskFailureIsLocalStorageNotTransport() throws Exception {
+        Path notADirectory = Files.writeString(spoolDir.resolve("a-file"), "x");
+        IoWriter body = o -> LargeBodies.redrock(o, 20_000); // ~5 MB, so it must go to a temporary file
+        try (StubHttpServer stub = streaming("/api/Redrock/query", body)) {
+            Map<String, Object> out = stubApi(stub.rootUrl(), null).withSpool(new ResponseBody.Settings(notADirectory,
+                    ResponseBody.MEMORY_BYTES, 0, 0, Duration.ofHours(24))).redrock(SCRIPT, 1, 50_000, null, -1);
+
+            assertEquals(false, out.get("ok"));
+            assertEquals("LOCAL_STORAGE", out.get("error_kind"));
+            assertTrue(String.valueOf(out.get("error")).contains("temporary file"), String.valueOf(out.get("error")));
+            assertTrue(String.valueOf(out.get("error")).contains("not a network or CyberArk failure"));
+            assertEquals(200, out.get("http_status"));
+            assertFalse(out.containsKey("response"));
+            assertEquals(false, completeness(out).get("response_complete"));
+        }
+    }
+
+    @Test
+    void aTemporaryFileThatCannotBeReadIsAStorageErrorNotAConfigurationError() throws Exception {
+        ResponseBody body;
+        try (ResponseBody.Writer writer = new ResponseBody.Writer(spool())) {
+            writer.write(new byte[2 * ResponseBody.MEMORY_BYTES]);
+            body = writer.finish();
+        }
+        assertTrue(body.spooled());
+        try (var files = Files.list(spoolDir)) {
+            Files.delete(files.findFirst().orElseThrow()); // the file disappears underneath us
+        }
+        java.io.UncheckedIOException e = assertThrows(java.io.UncheckedIOException.class, body::text);
+        assertInstanceOf(ResponseBody.LocalStorageException.class, e.getCause());
+        assertThrows(java.io.UncheckedIOException.class, body::tree);
+        assertThrows(ResponseBody.LocalStorageException.class, body::readText);
+
+        Map<String, Object> run = com.keyforge.cyberarkpoc.rest.ExtractionRestServer.run("cloud/test",
+                new com.keyforge.cyberarkpoc.rest.ExtractionRestServer.QueryRoute("test", p -> {
+                    body.text();
+                    return Map.of();
+                }), Map.of());
+        assertEquals("FAILED", run.get("status"));
+        assertEquals("LOCAL_STORAGE", run.get("error_kind"));
+        body.close();
+        assertEquals(0, filesLeft());
+    }
+
+    @Test
+    void staleFilesAreSweptPeriodicallyAndOnlyOurRegularFiles() throws Exception {
+        Instant t0 = Instant.now();
+        assertTrue(ResponseBody.maybeSweep(spool(), t0));
+
+        FileTime twoDaysAgo = FileTime.from(t0.minus(Duration.ofDays(2)));
+        Path stale = Files.writeString(spoolDir.resolve(ResponseBody.FILE_PREFIX + "crash" + ResponseBody.FILE_SUFFIX),
+                "x");
+        Path dirWithOurName = Files.createDirectory(spoolDir.resolve(ResponseBody.FILE_PREFIX + "dir"
+                + ResponseBody.FILE_SUFFIX));
+        Path nested = Files.createDirectory(spoolDir.resolve("sub"));
+        Path nestedStale = Files.writeString(nested.resolve(ResponseBody.FILE_PREFIX + "n" + ResponseBody.FILE_SUFFIX),
+                "x");
+        for (Path p : new Path[] {stale, dirWithOurName, nestedStale}) {
+            Files.setLastModifiedTime(p, twoDaysAgo);
+        }
+
+        assertFalse(ResponseBody.maybeSweep(spool(), t0.plus(Duration.ofMinutes(30))), "not again within the hour");
+        assertTrue(Files.exists(stale));
+        assertTrue(ResponseBody.maybeSweep(spool(), t0.plus(ResponseBody.SWEEP_EVERY)), "swept again later");
+        assertFalse(Files.exists(stale), "a crash leftover is removed while the service keeps running");
+        assertTrue(Files.exists(dirWithOurName), "directories are never deleted");
+        assertTrue(Files.exists(nestedStale), "nothing below the configured directory");
+    }
+
+    @Test
+    void anActiveFileIsNeverSwept() throws Exception {
+        try (ResponseBody.Writer writer = new ResponseBody.Writer(new ResponseBody.Settings(spoolDir,
+                ResponseBody.MEMORY_BYTES, 0, 0, Duration.ZERO))) { // everything counts as "old"
+            writer.write(new byte[2 * ResponseBody.MEMORY_BYTES]);
+            ResponseBody body = writer.finish();
+            assertEquals(0, ResponseBody.sweep(new ResponseBody.Settings(spoolDir, ResponseBody.MEMORY_BYTES, 0, 0,
+                    Duration.ZERO)));
+            assertEquals(2L * ResponseBody.MEMORY_BYTES, body.readText().length(), "still readable");
+            body.close();
+        }
+        assertEquals(0, filesLeft());
+    }
 }

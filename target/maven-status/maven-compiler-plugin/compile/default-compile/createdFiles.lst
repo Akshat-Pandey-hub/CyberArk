@@ -52,6 +52,7 @@ com\keyforge\cyberarkpoc\check\ApproverGroupCheck$MemberResult.class
 com\keyforge\cyberarkpoc\mock\MockDataset$RoleRow.class
 com\keyforge\cyberarkpoc\config\PvwaConfig.class
 com\keyforge\cyberarkpoc\check\PolicyHealthRun.class
+com\keyforge\cyberarkpoc\client\ResponseBody$LocalStorageException.class
 com\keyforge\cyberarkpoc\check\ApproverGroupCheck$1.class
 com\keyforge\cyberarkpoc\client\CloudApi$Target.class
 com\keyforge\cyberarkpoc\client\SecretRedactor$Redacted.class
