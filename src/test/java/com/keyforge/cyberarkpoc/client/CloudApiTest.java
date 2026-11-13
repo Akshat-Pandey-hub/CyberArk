@@ -173,6 +173,46 @@ class CloudApiTest {
         }
     }
 
+    /** Completeness of a call against the mock; the mock's Limit modes are simulations, not tenant behaviour. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> limitRun(MockFixture f, MockCyberArkServer.RedrockLimit mode, int pageNumber,
+                                                int pageSize, Integer limit) throws Exception {
+        f.mock.redrockLimit(mode);
+        Map<String, Object> out = platform(f).redrock(SCRIPT, pageNumber, pageSize, limit, -1);
+        assertEquals(true, out.get("ok"), json(out));
+        return (Map<String, Object>) out.get("completeness");
+    }
+
+    @Test
+    void theMockIgnoresRedrockLimitUnlessASimulationIsSelected() throws Exception {
+        try (MockFixture f = MockFixture.start(SampleData.demo())) {
+            assertEquals(MockCyberArkServer.RedrockLimit.IGNORE, f.mock.redrockLimit(), "default unchanged");
+
+            Map<String, Object> ignored = limitRun(f, MockCyberArkServer.RedrockLimit.IGNORE, 1, 3, 1);
+            assertEquals(3L, ignored.get("records_in_response"));
+            assertEquals(true, ignored.get("rows_exceed_limit"));
+            assertNull(ignored.get("next_request"));
+
+            Map<String, Object> perPage = limitRun(f, MockCyberArkServer.RedrockLimit.PER_PAGE, 1, 3, 1);
+            assertEquals(1L, perPage.get("records_in_response"), "simulated: at most Limit rows of the page");
+            assertNull(perPage.get("rows_exceed_limit"));
+            assertNull(perPage.get("next_request"), "the next page could skip rows 2-3");
+            Map<String, Object> perPage2 = limitRun(f, MockCyberArkServer.RedrockLimit.PER_PAGE, 2, 3, 1);
+            assertEquals(1L, perPage2.get("records_in_response"), "page 2 starts at row 4, so rows 2-3 were skipped");
+
+            Map<String, Object> total = limitRun(f, MockCyberArkServer.RedrockLimit.TOTAL, 1, 2, 3);
+            assertEquals(2L, total.get("records_in_response"));
+            assertEquals(Map.of("pageNumber", 2, "pageSize", 2, "limit", 3), total.get("next_request"));
+            Map<String, Object> total2 = limitRun(f, MockCyberArkServer.RedrockLimit.TOTAL, 2, 2, 3);
+            assertEquals(1L, total2.get("records_in_response"), "simulated: only 3 rows in all");
+            assertNull(total2.get("more_available"), "the short page conflicts with FullCount 5, so no end is claimed");
+            assertEquals(true, total2.get("cyberark_limit_suspected"));
+
+            Map<String, Object> noLimit = limitRun(f, MockCyberArkServer.RedrockLimit.PER_PAGE, 1, 3, null);
+            assertEquals(3L, noLimit.get("records_in_response"), "no Limit sent, nothing cut in any mode");
+        }
+    }
+
     @Test
     void redrockSuccessFalseIsNeverReportedAsSuccess() throws Exception {
         try (MockFixture f = MockFixture.start(SampleData.demo())) {

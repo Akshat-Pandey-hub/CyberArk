@@ -87,8 +87,22 @@ public final class Main {
                 System.exit(2);
             }
         }
+        MockCyberArkServer.RedrockLimit limitMode = MockCyberArkServer.RedrockLimit.IGNORE;
+        String limitSetting = System.getenv(MockCyberArkServer.REDROCK_LIMIT_ENV);
+        if (limitSetting != null && !limitSetting.isBlank()) {
+            try {
+                limitMode = MockCyberArkServer.RedrockLimit.valueOf(limitSetting.trim().toUpperCase(java.util.Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                System.err.println(MockCyberArkServer.REDROCK_LIMIT_ENV + " must be IGNORE, PER_PAGE or TOTAL: "
+                        + limitSetting);
+                System.exit(2);
+            }
+        }
         MockCyberArkServer mock = MockCyberArkServer.start(SampleData.demo(), port);
+        mock.redrockLimit(limitMode);
         System.out.println("Mock CyberArk running at " + mock.rootUrl() + " (FABRICATED data, not a CyberArk tenant)");
+        System.out.println("  Redrock Limit: " + limitMode + " (a SIMULATION, not confirmed CyberArk behaviour; set "
+                + MockCyberArkServer.REDROCK_LIMIT_ENV + "=IGNORE|PER_PAGE|TOTAL)");
         System.out.println(MockCyberArkServer.describeEndpoints(mock.rootUrl()));
         System.out.println("  Mock credentials: client_id=" + MockCyberArkServer.MOCK_CLIENT_ID
                 + " client_secret=" + MockCyberArkServer.MOCK_CLIENT_SECRET);

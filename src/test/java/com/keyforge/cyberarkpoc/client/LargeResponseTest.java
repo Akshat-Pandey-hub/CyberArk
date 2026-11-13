@@ -500,6 +500,27 @@ class LargeResponseTest {
     }
 
     @Test
+    void moreRowsThanTheLimitSentAreFlaggedAndNoNextPageIsSuggested() {
+        Map<String, Object> below = completeness(redrockReply(rows(3, 5), 1, 3, 1));
+        assertEquals(3L, below.get("records_in_response"));
+        assertEquals(true, below.get("rows_exceed_limit"));
+        assertNull(below.get("more_available"));
+        assertNull(below.get("all_records_in_this_response"));
+        assertNull(below.get("next_request"));
+        String basis = String.valueOf(below.get("basis"));
+        assertTrue(basis.contains("3 rows, more than the limit sent (1)"), basis);
+        assertFalse(basis.contains("= limit"), "never claims the rows equal the limit");
+
+        Map<String, Object> above = completeness(redrockReply(rows(6, 10), 1, 3, 5));
+        assertEquals(true, above.get("rows_exceed_limit"), "limit at or above pageSize, still more rows than it");
+        assertNull(above.get("next_request"));
+
+        Map<String, Object> equal = completeness(redrockReply(rows(1, 5), 1, 3, 1));
+        assertNull(equal.get("rows_exceed_limit"), "rows equal to the limit are not a discrepancy");
+        assertTrue(String.valueOf(equal.get("basis")).contains("1 rows = the limit sent (1)"));
+    }
+
+    @Test
     void aLimitBelowPageSizeNeverSuggestsANextPageThatCouldSkipRows() {
         Map<String, Object> full = completeness(redrockReply(rows(10, 100), 1, 100, 10));
         assertEquals(10L, full.get("records_in_response"));

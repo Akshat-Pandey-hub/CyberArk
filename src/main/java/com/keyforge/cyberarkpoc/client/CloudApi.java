@@ -734,13 +734,25 @@ public final class CloudApi {
                     + (firstPage ? "" : "; earlier pages hold the other rows"));
             return;
         }
+        if (limit != null && rows > limit) {
+            // CyberArk sent more rows than the Limit we sent, so it did not apply Limit the way it is documented.
+            // How it paged this response is then unknown, so nothing is concluded and no next page is suggested.
+            c.put("more_available", null);
+            c.put("all_records_in_this_response", null);
+            c.put("rows_exceed_limit", true);
+            c.put("basis", "the response has " + rows + " rows, more than the limit sent (" + limit + "): CyberArk "
+                    + "did not apply Limit as the documented maximum for the page. Whether more rows exist cannot be "
+                    + "told, and no next page is suggested because the paging CyberArk applied is unclear. Request "
+                    + "again without limit (pageSize alone) to page reliably");
+            return;
+        }
         c.put("more_available", null);
         c.put("all_records_in_this_response", firstPage ? null : false);
         if (limit != null && limit < pageSize) {
             // Redrock documents Limit as "the maximum results for the specified page", while CyberArk's official SDK
             // sends it as a cap on the total. Either way, the next PageNumber with this PageSize could start after
             // rows this response left out (limit+1 .. pageSize of this page), so no next page is suggested.
-            c.put("basis", rows + " rows = limit (" + limit + "), which is smaller than pageSize (" + pageSize + "). "
+            c.put("basis", rows + " rows = the limit sent (" + limit + "), which is smaller than pageSize (" + pageSize + "). "
                     + "More rows may exist, but requesting the next pageNumber with this pageSize could skip the rows "
                     + "between them (Limit's exact paging behaviour is not fully documented). To page without gaps, "
                     + "send pageSize equal to the number of rows wanted and no smaller limit");

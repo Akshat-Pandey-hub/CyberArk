@@ -131,6 +131,47 @@ public final class MockCyberArkServer implements AutoCloseable {
         this.memberShape = shape;
     }
 
+    /**
+     * How the mock treats Redrock's {@code Limit} argument. A SIMULATION, not CyberArk behaviour: Redrock documents
+     * Limit as "the maximum results for the specified page", CyberArk's official SDK sends it as a cap on the total,
+     * and neither has been confirmed against a tenant. The modes only let the client's handling of each reading be
+     * exercised; a result from any of them says nothing about a real tenant.
+     */
+    public enum RedrockLimit {
+        /** Default: Limit is ignored; the page is cut by PageNumber and PageSize only. */
+        IGNORE,
+        /** Simulates the documented wording: at most Limit rows of the requested page. */
+        PER_PAGE,
+        /** Simulates the SDK's use: only the first Limit rows of the whole result are ever served, on any page. */
+        TOTAL
+    }
+
+    /** Environment variable that selects {@link RedrockLimit} when the mock is started from the command line. */
+    public static final String REDROCK_LIMIT_ENV = "MOCK_REDROCK_LIMIT";
+
+    private volatile RedrockLimit redrockLimit = RedrockLimit.IGNORE;
+
+    /** Test-only: how Redrock's Limit is simulated (see {@link RedrockLimit}). */
+    public void redrockLimit(RedrockLimit mode) {
+        this.redrockLimit = mode;
+    }
+
+    public RedrockLimit redrockLimit() {
+        return redrockLimit;
+    }
+
+    /** Rows {@code from..to} of {@code all}, with Limit applied as the selected {@link RedrockLimit} simulates. */
+    private List<ObjectNode> page(List<ObjectNode> all, int from, int to, int limit) {
+        if (limit > 0 && redrockLimit == RedrockLimit.PER_PAGE) {
+            to = Math.min(to, from + limit);
+        } else if (limit > 0 && redrockLimit == RedrockLimit.TOTAL) {
+            int cap = Math.min(limit, all.size());
+            from = Math.min(from, cap);
+            to = Math.min(to, cap);
+        }
+        return all.subList(from, to);
+    }
+
     /** The raw Redrock request bodies received (Script and args), so tests can check the paging sent. */
     private final List<String> redrockBodies = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -642,14 +683,15 @@ public final class MockCyberArkServer implements AutoCloseable {
         List<String> columns = selectedColumns(script);
         int pageNumber = args.path("PageNumber").asInt(0);
         int pageSize = args.path("PageSize").asInt(0);
+        int limit = args.path("Limit").asInt(0);
         if (role.find()) {
-            redrockRoles(exchange, unquote(role.group(1)), pageNumber, pageSize, columns);
+            redrockRoles(exchange, unquote(role.group(1)), pageNumber, pageSize, limit, columns);
         } else if (roleById.find()) {
             redrockRoleById(exchange, unquote(roleById.group(1)), columns);
         } else if (user.find()) {
             redrockUser(exchange, unquote(user.group(1)), columns);
         } else if (USER_TABLE_QUERY.matcher(script).find()) {
-            redrockUsers(exchange, pageNumber, pageSize, columns);
+            redrockUsers(exchange, pageNumber, pageSize, limit, columns);
         } else {
             count("redrock-other");
             if (authorized(exchange)) {
@@ -661,9 +703,10 @@ public final class MockCyberArkServer implements AutoCloseable {
     /**
      * Role search with the documented paging arguments: 1-based {@code PageNumber} and {@code PageSize} (no args =
      * everything), {@code Count} = rows on this page, {@code FullCount} = all matching roles. Faults: WRONG_COUNT
-     * reports a FullCount one higher; IGNORE_OFFSET always serves the first page.
+     * reports a FullCount one higher; IGNORE_OFFSET always serves the first page. {@code Limit} is applied only as
+     * the selected {@link RedrockLimit} simulation says (ignored by default); FullCount is never changed by it.
      */
-    private void redrockRoles(HttpExchange exchange, String likePattern, int pageNumber, int pageSize,
+    private void redrockRoles(HttpExchange exchange, String likePattern, int pageNumber, int pageSize, int limit,
                               List<String> columns) throws IOException {
         count(REDROCK_ROLE);
         Fault fault = faults.get(REDROCK_ROLE);
@@ -686,7 +729,7 @@ public final class MockCyberArkServer implements AutoCloseable {
             from = Math.min((page - 1) * pageSize, matching.size());
             to = Math.min(from + pageSize, matching.size());
         }
-        ArrayNode results = rows(exchange, matching.subList(from, to), columns);
+        ArrayNode results = rows(exchange, page(matching, from, to, limit), columns);
         if (results == null) {
             return;
         }
@@ -697,9 +740,9 @@ public final class MockCyberArkServer implements AutoCloseable {
 
     /**
      * {@code SELECT .. FROM User} without an id filter: every user, 1-based paging as for roles. Only the selected
-     * columns are returned.
+     * columns are returned. {@code Limit} as for roles.
      */
-    private void redrockUsers(HttpExchange exchange, int pageNumber, int pageSize, List<String> columns)
+    private void redrockUsers(HttpExchange exchange, int pageNumber, int pageSize, int limit, List<String> columns)
             throws IOException {
         count(REDROCK_USERS);
         if (!authorized(exchange) || applyFault(exchange, REDROCK_USERS)) {
@@ -714,7 +757,7 @@ public final class MockCyberArkServer implements AutoCloseable {
             from = Math.min((Math.max(pageNumber, 1) - 1) * pageSize, all.size());
             to = Math.min(from + pageSize, all.size());
         }
-        ArrayNode results = rows(exchange, all.subList(from, to), columns);
+        ArrayNode results = rows(exchange, page(all, from, to, limit), columns);
         if (results == null) {
             return;
         }
