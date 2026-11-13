@@ -46,7 +46,15 @@ Every call returns one JSON object:
 }
 ```
 
-- `response` is exactly what CyberArk returned. Large responses are streamed, so there is no size limit.
+- `response` is exactly what CyberArk returned.
+- **Response size:**
+  - There is no size cap by default.
+  - Responses up to 1 MB are kept in memory. Larger ones are streamed to a temporary file in the spool directory
+    (`CYBERARK_SPOOL_DIR`, by default `<system temp>/cyberark-poc-responses`) and deleted once sent.
+  - `CYBERARK_SPOOL_MIN_FREE_MB` (default 512) is the free space that must stay on the spool disk. A response that
+    would go below it fails with `LOCAL_LIMIT`.
+  - `CYBERARK_MAX_RESPONSE_MB` is an optional cap (off by default). A larger response fails with `LOCAL_LIMIT`.
+  - Neither of these is a CyberArk limit, and a part of a response is never returned.
 - `completeness` says whether this page is complete, whether more pages exist, and what to send to get the next one.
 - When a call fails, `status` is `FAILED` and `error_kind` says why: `AUTHENTICATION`, `AUTHORIZATION`,
   `RATE_LIMITED`, `HTTP_STATUS`, `API_FAILURE`, `INVALID_RESPONSE` or `TRANSPORT`. A wrong parameter gives

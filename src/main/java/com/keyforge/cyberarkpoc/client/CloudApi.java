@@ -27,9 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * The four cloud operations as plain pass-through calls: one request to CyberArk, built as documented, and CyberArk's
@@ -427,12 +424,6 @@ public final class CloudApi {
         return finish(out, true, null, null, started);
     }
 
-    private static final ScheduledExecutorService DEADLINES = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "cyberark-response-deadline");
-        t.setDaemon(true);
-        return t;
-    });
-
     /**
      * One request. The status and headers must arrive within {@code timeout} (HttpClient's request timeout); the body
      * is then received into a {@link ResponseBody} within what is left of the same {@code timeout}. Java's request
@@ -483,50 +474,6 @@ public final class CloudApi {
                     + (e.getMessage() == null ? "" : ": " + e.getMessage()), e);
         } finally {
             watch.stop();
-        }
-    }
-
-    /** Stops a body that is still arriving at the deadline: interrupts the reading thread and closes the stream. */
-    private static final class Deadline {
-        private final Thread reader;
-        private final InputStream in;
-        private final java.util.concurrent.ScheduledFuture<?> task;
-        private int state; // 0 running, 1 done, 2 fired
-
-        Deadline(Thread reader, InputStream in, long nanos) {
-            this.reader = reader;
-            this.in = in;
-            this.task = DEADLINES.schedule(this::fire, nanos, TimeUnit.NANOSECONDS);
-        }
-
-        private void fire() {
-            synchronized (this) {
-                if (state != 0) {
-                    return;
-                }
-                state = 2;
-                reader.interrupt();
-            }
-            try {
-                in.close();
-            } catch (IOException ignored) {
-                // the interrupt already stops the read
-            }
-        }
-
-        /** Ends the watch; returns whether the deadline fired (its interrupt is then cleared from this thread). */
-        boolean stop() {
-            synchronized (this) {
-                if (state == 0) {
-                    state = 1;
-                }
-            }
-            task.cancel(false);
-            if (state == 2) {
-                Thread.interrupted();
-                return true;
-            }
-            return false;
         }
     }
 
@@ -781,6 +728,16 @@ public final class CloudApi {
         c.put("paged", true);
         c.put("records_in_response", results);
         boolean more = token != null && token.isTextual() && !token.asText().isEmpty();
+        if (more && continued && token.asText().equals(shape.params.get("nextToken"))) {
+            // Nothing is retried or fetched: the caller is told that following this token would not advance.
+            c.put("more_available", null);
+            c.put("all_records_in_this_response", false);
+            c.put("pagination_stalled", true);
+            c.put("basis", "CyberArk returned the same nextToken that was sent, so paging is not advancing: sending it "
+                    + "again could return this page again. Whether more policies exist cannot be told from this "
+                    + "response, and no next request is suggested");
+            return;
+        }
         if (more) {
             c.put("more_available", true);
             c.put("all_records_in_this_response", false);

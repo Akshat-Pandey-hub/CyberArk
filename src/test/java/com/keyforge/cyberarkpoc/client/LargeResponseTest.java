@@ -619,4 +619,123 @@ class LargeResponseTest {
         }
         assertEquals(0, filesLeft());
     }
+
+    // ---- token response deadline and repeated continuation tokens ------------------------------
+
+    /** A CloudApi whose request timeout (which also bounds the token request) is {@code timeout}. */
+    private CloudApi timedApi(String apiRoot, URI tokenUrl, Duration timeout) {
+        return new CloudApi(new CyberArkConfig(URI.create(apiRoot + "/api"), tokenUrl, "client", "secret-value",
+                timeout, CyberArkConfig.AuthMethod.PLATFORM, null, null, null), null).withSpool(spool());
+    }
+
+    @Test
+    void aTokenBodyStillArrivingAtTheDeadlineIsATransportFailureAndTheApiIsNotCalled() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger apiCalls = new java.util.concurrent.atomic.AtomicInteger();
+        try (StubHttpServer stub = new StubHttpServer()
+                .handle("/api/oauth2/platformtoken", ex -> {
+                    ex.sendResponseHeaders(200, 0); // headers at once, then the body slowly
+                    OutputStream o = ex.getResponseBody();
+                    o.write("{\"access_token\":\"partial-tok".getBytes(StandardCharsets.UTF_8));
+                    o.flush();
+                    for (int i = 0; i < 20; i++) {
+                        try {
+                            Thread.sleep(300);
+                            o.write('x');
+                            o.flush();
+                        } catch (InterruptedException | IOException e) {
+                            return;
+                        }
+                    }
+                    o.write("\",\"expires_in\":900}".getBytes(StandardCharsets.UTF_8));
+                    o.close();
+                })
+                .handle("/api/Redrock/query", ex -> {
+                    apiCalls.incrementAndGet();
+                    ex.sendResponseHeaders(500, -1);
+                })) {
+            long start = System.nanoTime();
+            Map<String, Object> out = timedApi(stub.rootUrl(), URI.create(stub.rootUrl() + "/api/oauth2/platformtoken"),
+                    Duration.ofSeconds(1)).redrock(SCRIPT, 1, 10, null, -1);
+            long ms = (System.nanoTime() - start) / 1_000_000;
+
+            assertEquals(false, out.get("ok"));
+            assertEquals("token", out.get("stage"));
+            assertEquals("TRANSPORT", out.get("error_kind"));
+            assertTrue(String.valueOf(out.get("error")).contains("whole token response did not arrive within 1 s"),
+                    String.valueOf(out.get("error")));
+            assertFalse(MAPPER.writeValueAsString(out).contains("partial-tok"), "no partial token is used or shown");
+            assertEquals(0, apiCalls.get(), "the API is never called without a whole token");
+            assertTrue(ms < 3000, "stopped at the deadline (" + ms + " ms)");
+            assertFalse(Thread.currentThread().isInterrupted(), "no interrupt left on the caller's thread");
+        }
+    }
+
+    @Test
+    void aTokenBodyCutOffMidWayIsATransportFailure() throws Exception {
+        String raw = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n"
+                + "{\"access_token\":\"partial-tok";
+        try (StubHttpServer api = new StubHttpServer().reply("/api/Redrock/query", 200, rows(1, 1));
+             LargeBodies.CutOffServer tokens = new LargeBodies.CutOffServer(raw)) {
+            Map<String, Object> out = timedApi(api.rootUrl(), URI.create(tokens.rootUrl() + "/oauth2/platformtoken"),
+                    Duration.ofSeconds(5)).redrock(SCRIPT, 1, 10, null, -1);
+
+            assertEquals(false, out.get("ok"));
+            assertEquals("token", out.get("stage"));
+            assertEquals("TRANSPORT", out.get("error_kind"));
+            assertTrue(String.valueOf(out.get("error")).contains("connection ended before the whole token response"),
+                    String.valueOf(out.get("error")));
+            assertFalse(MAPPER.writeValueAsString(out).contains("partial-tok"));
+            assertFalse(out.containsKey("response"));
+        }
+    }
+
+    @Test
+    void aWholeTokenResponseIsAcceptedAndUsed() throws Exception {
+        try (StubHttpServer stub = new StubHttpServer().reply("/api/oauth2/platformtoken", 200, TOKEN_REPLY)
+                .reply("/api/Redrock/query", 200, rows(2, 2))) {
+            CloudApi api = timedApi(stub.rootUrl(), URI.create(stub.rootUrl() + "/api/oauth2/platformtoken"),
+                    Duration.ofSeconds(5));
+            Map<String, Object> token = api.token(CloudApi.Target.IDENTITY);
+            assertEquals(true, token.get("ok"), String.valueOf(token));
+            assertFalse(MAPPER.writeValueAsString(token).contains("stub-token-abc"), "the token itself is never shown");
+
+            Map<String, Object> out = api.redrock(SCRIPT, 1, 10, null, -1);
+            assertEquals(true, out.get("ok"), String.valueOf(out));
+            assertTrue(stub.authorizationHeaders().contains("Bearer stub-token-abc"), "the API got the whole token");
+        }
+    }
+
+    private Map<String, Object> uapReply(String sentToken, String returnedToken) {
+        String body = "{\"results\":[{\"policyId\":\"p1\"},{\"policyId\":\"p2\"}],\"total\":10"
+                + (returnedToken == null ? "" : ",\"nextToken\":\"" + returnedToken + "\"") + "}";
+        try (StubHttpServer stub = new StubHttpServer()
+                .reply(PolicyConfig.TOKEN_PATH + MockCyberArkServer.MOCK_POLICY_APP_ID, 200, TOKEN_REPLY)
+                .reply("/api/policies", 200, body)) {
+            return completeness(new CloudApi(null, MockFixture.policyConfig(stub.rootUrl(), PolicyConfig.Api.UAP,
+                    MockCyberArkServer.MOCK_CLIENT_SECRET, 50, 10)).withSpool(spool())
+                    .policies(2, sentToken, null, null, null));
+        }
+    }
+
+    @Test
+    void theSameNextTokenComingBackIsReportedAsStalledWithNoNextRequest() {
+        Map<String, Object> stalled = uapReply("tok-A", "tok-A");
+        assertEquals(true, stalled.get("pagination_stalled"));
+        assertNull(stalled.get("more_available"), "cannot be told");
+        assertEquals(false, stalled.get("all_records_in_this_response"));
+        assertNull(stalled.get("next_request"), "following the same token would not advance");
+        assertTrue(String.valueOf(stalled.get("basis")).contains("same nextToken that was sent"));
+
+        Map<String, Object> advancing = uapReply("tok-A", "tok-B");
+        assertNull(advancing.get("pagination_stalled"));
+        assertEquals(true, advancing.get("more_available"));
+        assertEquals("tok-B", ((Map<?, ?>) advancing.get("next_request")).get("nextToken"));
+
+        Map<String, Object> first = uapReply(null, "tok-A");
+        assertNull(first.get("pagination_stalled"), "a first page has nothing to compare with");
+        assertEquals(true, first.get("more_available"));
+
+        Map<String, Object> last = uapReply("tok-B", null);
+        assertEquals(false, last.get("more_available"), "no nextToken: the end, as before");
+    }
 }

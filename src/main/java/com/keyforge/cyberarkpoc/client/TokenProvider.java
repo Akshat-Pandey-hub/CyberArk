@@ -156,9 +156,10 @@ public final class TokenProvider {
             }
         }
         HttpRequest request = builder.build();
-        HttpResponse<String> response;
+        long deadline = System.nanoTime() + timeout.toNanos();
+        HttpResponse<java.io.InputStream> response;
         try {
-            response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException e) {
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null,
                     "token request failed: " + e.getMessage(), e);
@@ -167,7 +168,7 @@ public final class TokenProvider {
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null, "interrupted", e);
         }
         int status = response.statusCode();
-        String raw = response.body();
+        String raw = readBody(response, status, deadline);
         if (status != 200) {
             // CyberArk's own answer (e.g. OAuth "error" / "error_description") explains the rejection. The message
             // gets a masked excerpt; the full body travels separately for callers that mask it themselves.
@@ -199,6 +200,32 @@ public final class TokenProvider {
         issued.add(accessToken);
         renewAt = clock.instant().plus(lifetime).minus(margin);
         return raw;
+    }
+
+    /**
+     * The whole token response body within what is left of {@code timeout} (the request timeout covers only the
+     * status and headers). A body that is still arriving at the deadline, or whose connection ends early, is a
+     * TRANSPORT failure; nothing of it is used, so no partial token is ever accepted.
+     */
+    private String readBody(HttpResponse<java.io.InputStream> response, int status, long deadline) {
+        java.io.ByteArrayOutputStream received = new java.io.ByteArrayOutputStream();
+        Deadline watch = new Deadline(Thread.currentThread(), response.body(), Math.max(1, deadline - System.nanoTime()));
+        try (java.io.InputStream in = response.body()) {
+            in.transferTo(received);
+            if (watch.stop()) { // the deadline fired just as the last byte arrived: treat as late
+                throw new IOException("deadline");
+            }
+            return received.toString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            boolean late = watch.stop();
+            throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, status, late
+                    ? "token request failed: HttpTimeoutException: the whole token response did not arrive within "
+                            + timeout.toSeconds() + " s (" + received.size() + " bytes received)"
+                    : "token request failed: the connection ended before the whole token response arrived ("
+                            + received.size() + " bytes received): " + e.getClass().getSimpleName(), e);
+        } finally {
+            watch.stop();
+        }
     }
 
     /** The Basic-auth value sent by {@link Style#CUSTOM_OAUTH2}, so it can be masked like the secret. */
