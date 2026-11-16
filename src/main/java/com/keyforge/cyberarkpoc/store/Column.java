@@ -10,7 +10,8 @@ public record Column(String name, Kind kind) {
         TEXT("text", "?"),
         BIGINT("bigint", "?"),
         BOOLEAN("boolean", "?"),
-        JSONB("jsonb", "?::jsonb");
+        JSONB("jsonb", "?::jsonb"),
+        TIMESTAMPTZ("timestamp with time zone", "?::timestamptz");
 
         public final String ddlType;
         public final String placeholder;
@@ -36,4 +37,5 @@ public record Column(String name, Kind kind) {
     public static Column bigint(String name) { return new Column(name, Kind.BIGINT); }
     public static Column bool(String name) { return new Column(name, Kind.BOOLEAN); }
     public static Column jsonb(String name) { return new Column(name, Kind.JSONB); }
+    public static Column timestamptz(String name) { return new Column(name, Kind.TIMESTAMPTZ); }
 }

@@ -17,6 +17,9 @@ import java.util.List;
  * {@code policy_api} (it has been set on every row since Use Case 2 was added), so each row keeps its identity:
  * only the unique index or constraint is replaced, and no row is changed or deleted.
  *
+ * <p>It also adds {@code missing_since} to {@code uap_policy_health_result} if absent (results tables of earlier
+ * versions); existing rows keep NULL there, meaning "not marked missing".
+ *
  * <p>Safe to run on every run: it does nothing once the old key is gone (or on a new table). It runs in one
  * transaction under the same per-table locks as the table preparation, so the old key is never dropped without the
  * new one in place. If a row had no {@code policy_api}, its API could not be known: then nothing is changed and the
@@ -41,6 +44,7 @@ final class PolicyKeyUpgrade {
             }
             upgradeTable(conn, schema, PolicyHealthRun.POLICY_TABLE, false, changes);
             upgradeTable(conn, schema, PolicyHealthRun.RESULT_TABLE, true, changes);
+            addMissingSince(conn, schema, changes);
             conn.commit();
             return changes;
         } catch (SQLException | RuntimeException e) {
@@ -49,6 +53,28 @@ final class PolicyKeyUpgrade {
         } finally {
             conn.setAutoCommit(autoCommit);
         }
+    }
+
+    /** Adds the nullable {@code missing_since} column to an existing results table; no row is changed. */
+    private static void addMissingSince(Connection conn, String schema, List<String> changes) throws SQLException {
+        String sql = "SELECT 1 FROM information_schema.columns WHERE table_schema = ? AND table_name = ? "
+                + "AND column_name = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, PolicyHealthRun.RESULT_TABLE);
+            ps.setString(3, PolicyHealthRun.MISSING_SINCE);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return;
+                }
+            }
+        }
+        try (Statement st = conn.createStatement()) {
+            st.execute("ALTER TABLE " + schema + "." + PolicyHealthRun.RESULT_TABLE + " ADD COLUMN IF NOT EXISTS \""
+                    + PolicyHealthRun.MISSING_SINCE + "\" timestamp with time zone");
+        }
+        changes.add(PolicyHealthRun.RESULT_TABLE + ": added " + PolicyHealthRun.MISSING_SINCE
+                + " (NULL on every existing row)");
     }
 
     /** A unique index (or the index of a unique constraint) whose only column is {@code policy_id}. */

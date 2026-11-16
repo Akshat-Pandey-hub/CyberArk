@@ -148,6 +148,7 @@ public final class RawRecordRepository {
         switch (c.kind()) {
             case TEXT -> ps.setString(index, v.isValueNode() ? v.asText() : v.toString());
             case JSONB -> ps.setString(index, v.toString());
+            case TIMESTAMPTZ -> ps.setString(index, v.asText()); // cast by the placeholder
             case BIGINT -> {
                 if (v.isIntegralNumber() && v.canConvertToLong()) {
                     ps.setLong(index, v.longValue());

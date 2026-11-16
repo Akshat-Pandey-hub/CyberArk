@@ -285,7 +285,8 @@ class PolicyHealthPostgresTest {
         GenericRecordStore oldPolicies = new GenericRecordStore(db.schema(), PolicyHealthRun.POLICY_TABLE,
                 List.of(PolicyHealthRun.KEY));
         RawRecordRepository oldResults = new RawRecordRepository(db.schema(), PolicyHealthRun.RESULT_TABLE,
-                PolicyHealthRun.RESULT_COLUMNS, PolicyHealthRun.KEY);
+                PolicyHealthRun.RESULT_COLUMNS.stream().filter(c -> !c.name().equals(PolicyHealthRun.MISSING_SINCE))
+                        .toList(), PolicyHealthRun.KEY);
         List<JsonNode> records = List.of(
                 MAPPER.readTree("{\"policy_id\":\"pol-001\",\"policy_api\":\"uap\",\"metadata\":{\"name\":\"old\"}}"),
                 MAPPER.readTree("{\"policy_id\":\"pol-gone\",\"policy_api\":" + gonePolicyApi
@@ -302,6 +303,7 @@ class PolicyHealthPostgresTest {
         }
         assertEquals(Set.of("policy_id"), uniqueKeys(PolicyHealthRun.POLICY_TABLE), "the old key");
         assertEquals(Set.of("policy_id"), uniqueKeys(PolicyHealthRun.RESULT_TABLE), "the old key");
+        assertFalse(columns(PolicyHealthRun.RESULT_TABLE).contains(PolicyHealthRun.MISSING_SINCE), "no column yet");
     }
 
     @Test
@@ -354,6 +356,15 @@ class PolicyHealthPostgresTest {
             assertTrue(first.get("schema_changes").toString().contains(
                     "uap_policy: unique key moved from (policy_id) to (policy_api, policy_id)"), first.toString());
             assertTrue(first.get("schema_changes").toString().contains("uap_policy_health_result: unique key moved"));
+            assertTrue(first.get("schema_changes").toString().contains(
+                    "uap_policy_health_result: added missing_since (NULL on every existing row)"), first.toString());
+            assertEquals("timestamp with time zone", columnType(PolicyHealthRun.RESULT_TABLE,
+                    PolicyHealthRun.MISSING_SINCE));
+            assertEquals(1, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE)
+                    + " WHERE missing_since IS NOT NULL AND policy_id = 'pol-gone'"),
+                    "the old row the complete run did not return is marked, not deleted");
+            assertEquals(0, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE)
+                    + " WHERE missing_since IS NOT NULL AND policy_id <> 'pol-gone'"));
             assertEquals(Map.of("inserted", 7, "updated", 1, "failed", 0),
                     ((Map<?, ?>) first.get("stored")).get(PolicyHealthRun.POLICY_TABLE), "the old pol-001 is updated");
 
@@ -373,6 +384,7 @@ class PolicyHealthPostgresTest {
             Map<String, Object> second = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
             assertEquals("SUCCESS", second.get("status"));
             assertFalse(second.get("schema_changes").toString().contains("unique key moved"), second.toString());
+            assertFalse(second.get("schema_changes").toString().contains("missing_since"), "added once only");
             Map<String, Object> sca = PolicyHealthRun.run(f.policyClient(Api.SCA), db);
             assertEquals("SUCCESS", sca.get("status"), String.valueOf(sca));
             assertFalse(sca.get("schema_changes").toString().contains("unique key moved"));
@@ -399,5 +411,262 @@ class PolicyHealthPostgresTest {
         }
         assertEquals("old", one("SELECT metadata->>'name' FROM " + t(PolicyHealthRun.POLICY_TABLE)
                 + " WHERE policy_id = 'pol-001'"), "nothing was updated");
+    }
+    // ---- policies no longer returned: missing_since, reconciliation and the per-API run lock -------------------
+
+    /** UAP/SCA policies with these ids; C is in Error, the others Active. */
+    private static MockDataset policies(String... ids) {
+        MockDataset data = new MockDataset();
+        for (String id : ids) {
+            data.policy(id, "MOCK-" + id, id.equals("C") ? "Error" : "Active", id.equals("C") ? "MOCK_C" : null,
+                    null);
+        }
+        return data;
+    }
+
+    private Map<String, Object> run(Api api, MockDataset data) {
+        try (MockFixture f = MockFixture.start(data)) {
+            return PolicyHealthRun.run(f.policyClient(api), db);
+        }
+    }
+
+    private Map<String, Object> uap(String... ids) {
+        return run(Api.UAP, policies(ids));
+    }
+
+    private String missingSince(String api, String id) throws Exception {
+        return one("SELECT missing_since::text FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_api = '"
+                + api + "' AND policy_id = '" + id + "'");
+    }
+
+    private String result(String api, String id, String column) throws Exception {
+        return one("SELECT " + column + "::text FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_api = '"
+                + api + "' AND policy_id = '" + id + "'");
+    }
+
+    private static Map<?, ?> reconciliation(Map<String, Object> run) {
+        return (Map<?, ?>) run.get("reconciliation");
+    }
+
+    private long markedMissing() throws Exception {
+        return count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE missing_since IS NOT NULL");
+    }
+
+    @Test
+    void aPolicyNotReturnedByACompleteUapRunIsMarkedAndKeepsItsLastOutcome() throws Exception {
+        Map<String, Object> first = uap("A", "B", "C", "D");
+        assertEquals("SUCCESS", first.get("status"));
+        assertEquals(Map.of("policy_api", "uap", "performed", true, "marked_missing", 0,
+                "reason", reconciliation(first).get("reason")), reconciliation(first));
+        String uuidC = result("uap", "C", "record_uuid");
+
+        Map<String, Object> second = uap("A", "B", "D");
+        assertEquals("SUCCESS", second.get("status"));
+        assertEquals(true, reconciliation(second).get("performed"));
+        assertEquals(1, reconciliation(second).get("marked_missing"));
+        assertTrue(missingSince("uap", "C") != null, "C was not returned by a complete run");
+        for (String id : List.of("A", "B", "D")) {
+            assertEquals(null, missingSince("uap", id), id + " is still returned");
+        }
+        assertEquals("FINDING", result("uap", "C", "outcome"), "C keeps its last outcome");
+        assertEquals(uuidC, result("uap", "C", "record_uuid"), "and its row");
+        assertEquals(4, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE)), "nothing deleted");
+        assertEquals(4, count("SELECT count(*) FROM " + t(PolicyHealthRun.POLICY_TABLE)), "raw records kept too");
+        // the run's own answer is about what CyberArk returned: C is neither a finding nor counted
+        assertEquals(Map.of("FINDING", 0L, "NO_FINDING", 3L, "CANNOT_VERIFY", 0L), second.get("summary"));
+        assertEquals("ALL_HEALTHY", second.get("health"));
+        assertEquals(3, ((List<?>) second.get("policies")).size());
+    }
+
+    @Test
+    void theMarkStaysPutOnRepeatsAndIsClearedWhenThePolicyComesBack() throws Exception {
+        uap("A", "B", "C", "D");
+        uap("A", "B", "D");
+        String since = missingSince("uap", "C");
+        String uuidC = result("uap", "C", "record_uuid");
+        String extractedC = result("uap", "C", "extracted_at");
+
+        Map<String, Object> repeat = uap("A", "B", "D");
+        assertEquals(0, reconciliation(repeat).get("marked_missing"), "already marked");
+        assertEquals(since, missingSince("uap", "C"), "the first time it went missing is kept");
+
+        Map<String, Object> back = uap("A", "B", "C", "D");
+        assertEquals("SUCCESS", back.get("status"));
+        assertEquals(null, missingSince("uap", "C"), "cleared by the normal upsert");
+        assertEquals(uuidC, result("uap", "C", "record_uuid"), "the same row, updated in place");
+        assertEquals(1, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_id = 'C'"));
+        assertEquals(1, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_api = 'uap' "
+                + "AND policy_id = 'C' AND extracted_at > '" + extractedC + "'::timestamptz"), "extracted_at updated");
+        assertEquals("FINDING", result("uap", "C", "outcome"));
+        assertEquals(0, markedMissing());
+    }
+
+    @Test
+    void uapReconciliationNeverTouchesScaAndScaDoesNotReconcile() throws Exception {
+        Map<String, Object> scaFirst = run(Api.SCA, policies("A", "B", "C", "D"));
+        assertEquals("SUCCESS", scaFirst.get("status"), String.valueOf(scaFirst));
+        uap("A", "B", "C", "D");
+        uap("A", "B", "D");
+        assertTrue(missingSince("uap", "C") != null);
+        assertEquals(null, missingSince("sca", "C"), "the SCA row with the same id is untouched");
+
+        Map<String, Object> scaSecond = run(Api.SCA, policies("A", "B", "D"));
+        assertEquals("SUCCESS", scaSecond.get("status"));
+        assertEquals(Map.of("policy_api", "sca", "performed", false, "marked_missing", 0,
+                "reason", PolicyHealthRun.SCA_NOT_RECONCILED), reconciliation(scaSecond));
+        assertEquals(null, missingSince("sca", "C"), "SCA never marks: its completeness cannot be shown");
+        assertEquals(1, markedMissing(), "only the UAP C");
+    }
+
+    @Test
+    void incompleteRunsNeverReconcile() throws Exception {
+        uap("A", "B", "C", "D");
+        record Case(String name, Fault fault, int pageSize, int maxPages, String... ids) {
+        }
+        List<Case> cases = List.of(
+                new Case("wrong total", Fault.WRONG_COUNT, 0, 0, "A", "B", "D"),
+                new Case("no total", Fault.NO_TOTAL, 0, 0, "A", "B", "D"),
+                new Case("repeated nextToken", Fault.REPEAT_NEXT_TOKEN, 1, 0, "A", "B", "D"),
+                new Case("failedServices", Fault.FAILED_SERVICES, 0, 0, "A", "B", "D"),
+                new Case("page limit", null, 1, 1, "A", "B", "D"),
+                new Case("duplicate id", null, 0, 0, "A", "B", "D", "D"));
+        for (Case c : cases) {
+            MockDataset data = policies(c.ids());
+            if (c.pageSize() > 0) {
+                data.policyPageSize(c.pageSize());
+            }
+            try (MockFixture f = MockFixture.start(data)) {
+                if (c.fault() != null) {
+                    f.mock.fail(MockCyberArkServer.POLICIES, c.fault());
+                }
+                com.keyforge.cyberarkpoc.client.PolicyClient client = c.maxPages() > 0
+                        ? new com.keyforge.cyberarkpoc.client.PolicyClient(MockFixture.policyConfig(f.mock.rootUrl(),
+                                Api.UAP, MockCyberArkServer.MOCK_CLIENT_SECRET, 50, c.maxPages()))
+                        : f.policyClient(Api.UAP);
+                Map<String, Object> r = PolicyHealthRun.run(client, db);
+
+                assertEquals("INCOMPLETE", r.get("status"), c.name() + ": " + r);
+                assertEquals(false, reconciliation(r).get("performed"), c.name());
+                assertTrue(String.valueOf(reconciliation(r).get("reason")).contains("INCOMPLETE"), c.name());
+                assertEquals(0, markedMissing(), c.name() + ": nothing marked");
+            }
+        }
+    }
+
+    @Test
+    void failedRunsAndStorageFailuresNeverReconcile() throws Exception {
+        uap("A", "B", "C", "D");
+        for (Fault fault : List.of(Fault.HTTP_500, Fault.MALFORMED_JSON)) {
+            try (MockFixture f = MockFixture.start(policies("A", "B", "D"))) {
+                f.mock.fail(MockCyberArkServer.POLICIES, fault);
+                Map<String, Object> r = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+                assertEquals("FAILED", r.get("status"), fault + ": " + r);
+                assertFalse(r.containsKey("reconciliation"), fault + ": a failed run stops before reconciling");
+            }
+        }
+        try (MockFixture f = MockFixture.start(policies("A", "B", "D"))) { // a timeout
+            f.mock.fail(MockCyberArkServer.POLICIES, Fault.DELAY);
+            com.keyforge.cyberarkpoc.client.PolicyClient slow = new com.keyforge.cyberarkpoc.client.PolicyClient(
+                    new com.keyforge.cyberarkpoc.config.PolicyConfig(Api.UAP, URI.create(f.mock.rootUrl() + "/api"),
+                            URI.create(f.mock.rootUrl() + com.keyforge.cyberarkpoc.config.PolicyConfig.TOKEN_PATH
+                                    + MockCyberArkServer.MOCK_POLICY_APP_ID), MockCyberArkServer.MOCK_CLIENT_ID,
+                            MockCyberArkServer.MOCK_CLIENT_SECRET, 50, 10, java.time.Duration.ofSeconds(1)));
+            Map<String, Object> r = PolicyHealthRun.run(slow, db);
+            assertEquals("FAILED", r.get("status"), String.valueOf(r));
+            assertEquals("TRANSPORT", r.get("error_kind"));
+        }
+        assertEquals(0, markedMissing(), "no failed run marks anything");
+
+        MockDataset noId = policies("A", "B", "D").policy(null, "MOCK-no-id", "Active", null, null);
+        Map<String, Object> withoutId = run(Api.UAP, noId);
+        assertEquals("COMPLETED_WITH_FAILURES", withoutId.get("status"));
+        assertEquals(false, reconciliation(withoutId).get("performed"));
+        assertEquals(0, markedMissing(), "a policy without an id could be C");
+
+        try (Connection conn = db.open(); Statement st = conn.createStatement()) {
+            st.execute("ALTER TABLE " + t(PolicyHealthRun.RESULT_TABLE)
+                    + " ADD CONSTRAINT it_refuse_b CHECK (policy_id <> 'B') NOT VALID");
+        }
+        Map<String, Object> storeFailed = uap("A", "B", "D");
+        assertEquals("COMPLETED_WITH_FAILURES", storeFailed.get("status"), String.valueOf(storeFailed));
+        assertEquals(false, reconciliation(storeFailed).get("performed"));
+        assertEquals(0, markedMissing(), "a row that could not be stored blocks reconciliation");
+    }
+
+    @Test
+    void anInterruptedRunCannotReconcileAndReleasesItsLock() throws Exception {
+        uap("A", "B", "C", "D");
+        try (MockFixture f = MockFixture.start(policies("A", "B", "D"))) {
+            f.mock.fail(MockCyberArkServer.POLICIES, Fault.DELAY); // the answer takes 2.5 s
+            java.util.concurrent.atomic.AtomicReference<Map<String, Object>> out =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Thread runner = new Thread(() -> out.set(PolicyHealthRun.run(f.policyClient(Api.UAP), db)));
+            runner.start();
+            waitForLock(PolicyHealthRun.LOCK_UAP);
+            runner.interrupt();
+            runner.join(10_000);
+
+            assertEquals("FAILED", out.get().get("status"), String.valueOf(out.get()));
+            assertFalse(out.get().containsKey("reconciliation"));
+        }
+        assertEquals(0, markedMissing());
+        assertEquals("SUCCESS", uap("A", "B", "D").get("status"), "the lock was released");
+        assertEquals(1, markedMissing());
+    }
+
+    /** Waits until a session holds the run lock of this API. */
+    private void waitForLock(int apiKey) throws Exception {
+        for (int i = 0; i < 100; i++) {
+            if (count("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = "
+                    + Integer.toUnsignedLong(PolicyHealthRun.LOCK_SPACE) + " AND objid = " + apiKey + " AND objsubid = 2")
+                    > 0) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("the run never took its lock");
+    }
+
+    @Test
+    void aSecondRunOfTheSameApiFailsAtOnceWhileTheOtherApiRuns() throws Exception {
+        // another process: a different session holding the UAP run lock
+        try (Connection other = db.open(); Statement st = other.createStatement()) {
+            st.execute("SELECT pg_advisory_lock(" + PolicyHealthRun.LOCK_SPACE + ", " + PolicyHealthRun.LOCK_UAP + ")");
+            try (MockFixture f = MockFixture.start(policies("A", "B", "C", "D"))) {
+                long start = System.nanoTime();
+                Map<String, Object> blocked = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+                assertEquals("FAILED", blocked.get("status"));
+                assertEquals("ALREADY_RUNNING", blocked.get("error_kind"));
+                assertEquals(PolicyHealthRun.ALREADY_RUNNING, blocked.get("error"));
+                assertTrue((System.nanoTime() - start) / 1_000_000 < 3000, "fails fast, does not wait");
+                assertEquals(0, f.mock.requestCount(MockCyberArkServer.POLICIES), "CyberArk not called");
+
+                assertEquals("SUCCESS", PolicyHealthRun.run(f.policyClient(Api.SCA), db).get("status"),
+                        "SCA has its own lock");
+            }
+            st.execute("SELECT pg_advisory_unlock(" + PolicyHealthRun.LOCK_SPACE + ", " + PolicyHealthRun.LOCK_UAP + ")");
+        }
+        assertEquals("SUCCESS", uap("A", "B", "C", "D").get("status"), "free again once the other session let go");
+    }
+
+    @Test
+    void realRunsInParallelUapBlocksUapButNotSca() throws Exception {
+        try (MockFixture slow = MockFixture.start(policies("A", "B", "C", "D"));
+             MockFixture fast = MockFixture.start(policies("A", "B", "C", "D"))) {
+            slow.mock.fail(MockCyberArkServer.POLICIES, Fault.DELAY); // the first UAP run takes 2.5 s
+            java.util.concurrent.atomic.AtomicReference<Map<String, Object>> first =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            Thread runner = new Thread(() -> first.set(PolicyHealthRun.run(slow.policyClient(Api.UAP), db)));
+            runner.start();
+            waitForLock(PolicyHealthRun.LOCK_UAP);
+
+            Map<String, Object> second = PolicyHealthRun.run(fast.policyClient(Api.UAP), db);
+            assertEquals("ALREADY_RUNNING", second.get("error_kind"), String.valueOf(second));
+            Map<String, Object> sca = PolicyHealthRun.run(fast.policyClient(Api.SCA), db);
+            assertEquals("SUCCESS", sca.get("status"), "SCA runs while UAP runs");
+
+            runner.join(15_000);
+            assertEquals("SUCCESS", first.get().get("status"), String.valueOf(first.get()));
+        }
     }
 }

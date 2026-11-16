@@ -36,6 +36,18 @@ import java.util.Map;
  * other. Tables of earlier versions (keyed on {@code policy_id} alone) are moved to this key in place
  * ({@link PolicyKeyUpgrade}); no row is changed or deleted.
  *
+ * <p><b>Policies no longer returned.</b> {@code uap_policy_health_result.missing_since} is NULL while a policy is
+ * returned. After a run whose status is SUCCESS (complete list, every policy with an id, every row stored), the rows
+ * of that API whose ids were not returned get {@code missing_since} (only if not already set); a policy that is
+ * returned again is cleared by its normal upsert. Rows are never deleted and keep their last outcome. "Missing" means
+ * "not returned by the latest qualifying run" (it may be deleted, or no longer visible to the service user). Only UAP
+ * runs reconcile: the SCA reference defines {@code total} as the number of policies returned, so an SCA run cannot
+ * prove its list is complete.
+ *
+ * <p><b>One run per API at a time.</b> A run holds a PostgreSQL session advisory lock for its API on its one
+ * connection from before CyberArk is called until the run ends; a second run of the same API (in any process) fails at
+ * once. UAP and SCA runs use different locks.
+ *
  * <p>{@code status} describes the retrieval: FAILED (nothing is stored, nothing is concluded), INCOMPLETE (stored,
  * but the list may be partial), COMPLETED_WITH_FAILURES (a policy could not be stored), SUCCESS. {@code health}
  * is the conclusion: FINDINGS, ALL_HEALTHY (only after a complete retrieval with every policy verified) or
@@ -50,17 +62,30 @@ public final class PolicyHealthRun {
     public static final String API_KEY = "policy_api";
     /** The key of both tables: one API's policy id never meets the other API's. */
     public static final List<String> KEYS = List.of(API_KEY, KEY);
+    /** When a policy was first not returned by a qualifying run; NULL while it is returned. */
+    public static final String MISSING_SINCE = "missing_since";
+    /** The advisory lock of a run: (LOCK_SPACE, LOCK_UAP or LOCK_SCA), held for the whole run. */
+    public static final int LOCK_SPACE = 0x4B465543; // "KFUC"
+    public static final int LOCK_UAP = 1;
+    public static final int LOCK_SCA = 2;
 
     public static final List<Column> RESULT_COLUMNS = List.of(
             Column.text("policy_id"), Column.text("policy_api"), Column.text("policy_name"), Column.text("outcome"),
             Column.text("status"), Column.text("status_code"), Column.text("status_description"),
             Column.text("target_category"), Column.text("location_type"), Column.text("reason"),
-            Column.bool("retrieval_complete"));
+            Column.bool("retrieval_complete"),
+            // never in a result record, so every upsert writes NULL here: a returned policy is not missing
+            Column.timestamptz(MISSING_SINCE));
 
     public static final String FAILED_NOTE =
             "the policy list could not be read, so nothing can be said about the health of the policies";
     public static final String INCOMPLETE_NOTE =
             "the policy list may be incomplete: policies that were not received are neither healthy nor unhealthy";
+    public static final String SCA_NOT_RECONCILED = "not reconciled: the SCA Policies API defines 'total' as the "
+            + "number of policies returned, so an SCA run cannot show that its list is complete; no stored SCA policy "
+            + "is marked missing";
+    public static final String ALREADY_RUNNING = "another ispss-policy-health run for this API is already running "
+            + "(it holds the PostgreSQL advisory lock); nothing was done. Run again when it has finished";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -83,7 +108,33 @@ public final class PolicyHealthRun {
             fail(body, "DATABASE", null, client.sanitize("could not connect to PostgreSQL: " + e.getMessage()));
             return body;
         }
+        int lockKey = client.api() == com.keyforge.cyberarkpoc.config.PolicyConfig.Api.SCA ? LOCK_SCA : LOCK_UAP;
         try (conn) {
+            if (!tryLock(conn, lockKey)) {
+                fail(body, "ALREADY_RUNNING", null, ALREADY_RUNNING);
+                return body;
+            }
+            try {
+                return locked(client, conn, db, api, policies, results, body);
+            } finally {
+                unlock(conn, lockKey);
+            }
+        } catch (SQLException e) {
+            String message = client.sanitize(e.getMessage());
+            if (body.containsKey("status")) {
+                body.put("database_error", message);
+            } else {
+                fail(body, "DATABASE", null, message);
+            }
+            return body;
+        }
+    }
+
+    /** The run itself, on the one connection that holds this API's lock. */
+    private static Map<String, Object> locked(PolicyClient client, Connection conn, DbConfig db, String api,
+                                              GenericRecordStore policies, RawRecordRepository results,
+                                              Map<String, Object> body) throws SQLException {
+        {
             policies.ensureTable(conn);
             results.ensureTable(conn);
             List<String> keyChanges = PolicyKeyUpgrade.upgrade(conn, db.schema());
@@ -177,6 +228,7 @@ public final class PolicyHealthRun {
                     .toList());
             body.put("policies", all.stream().map(PolicyHealthRun::json).toList());
             body.put("stored", stored);
+            body.put("reconciliation", reconcile(conn, db.schema(), client, api, status, byId.keySet()));
             List<String> schemaChanges = new ArrayList<>(keyChanges);
             schemaChanges.addAll(prepared.changes());
             body.put("schema_changes", schemaChanges);
@@ -184,14 +236,68 @@ public final class PolicyHealthRun {
                 body.put("error", firstError);
             }
             return body;
+        }
+    }
+
+    /**
+     * Marks the stored policies of this API that this run did not return, only after a SUCCESS run of UAP. One
+     * UPDATE (atomic): rows of this API, whose id is not among the ids returned, and not already marked. Outcomes and
+     * every other column are left as they are.
+     */
+    private static Map<String, Object> reconcile(Connection conn, String schema, PolicyClient client, String api,
+                                                 String status, java.util.Set<String> returnedIds) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("policy_api", api);
+        r.put("performed", false);
+        r.put("marked_missing", 0);
+        if (client.api() == com.keyforge.cyberarkpoc.config.PolicyConfig.Api.SCA) {
+            r.put("reason", SCA_NOT_RECONCILED);
+            return r;
+        }
+        if (!"SUCCESS".equals(status)) {
+            r.put("reason", "not reconciled: the run's status is " + status + ", so the policies not received cannot "
+                    + "be told apart from policies that no longer exist");
+            return r;
+        }
+        if (returnedIds.isEmpty()) {
+            r.put("reason", "not reconciled: the run returned no policies; an empty list is not used to mark every "
+                    + "stored policy missing");
+            return r;
+        }
+        String sql = "UPDATE " + schema + "." + RESULT_TABLE + " SET \"" + MISSING_SINCE + "\" = now() WHERE \""
+                + API_KEY + "\" = ? AND \"" + MISSING_SINCE + "\" IS NULL AND \"" + KEY + "\" <> ALL(?)";
+        try (java.sql.PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, api);
+            ps.setArray(2, conn.createArrayOf("text", returnedIds.toArray()));
+            int marked = ps.executeUpdate();
+            r.put("performed", true);
+            r.put("marked_missing", marked);
+            r.put("reason", "complete UAP run: stored UAP policies not returned now have " + MISSING_SINCE
+                    + " (kept with their last outcome; not returned does not prove deleted)");
         } catch (SQLException e) {
-            String message = client.sanitize(e.getMessage());
-            if (body.containsKey("status")) {
-                body.put("database_error", message);
-            } else {
-                fail(body, "DATABASE", null, message);
+            r.put("reason", "not reconciled: " + client.sanitize(e.getMessage()));
+        }
+        return r;
+    }
+
+    private static boolean tryLock(Connection conn, int key) throws SQLException {
+        try (java.sql.PreparedStatement ps = conn.prepareStatement("SELECT pg_try_advisory_lock(?, ?)")) {
+            ps.setInt(1, LOCK_SPACE);
+            ps.setInt(2, key);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
             }
-            return body;
+        }
+    }
+
+    /** Releases the lock; closing the connection (or a crash of this process) releases it as well. */
+    private static void unlock(Connection conn, int key) {
+        try (java.sql.PreparedStatement ps = conn.prepareStatement("SELECT pg_advisory_unlock(?, ?)")) {
+            ps.setInt(1, LOCK_SPACE);
+            ps.setInt(2, key);
+            ps.executeQuery().close();
+        } catch (SQLException ignored) {
+            // the connection is closed right after, which releases the lock
         }
     }
 
