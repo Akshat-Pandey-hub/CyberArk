@@ -213,24 +213,33 @@ public final class CyberArkClient {
         if (args != null) {
             body.put("args", args); // the official example's casing (its text says "Args")
         }
-        return sendJson("Redrock/query", jsonPost(uri, body));
+        // Redrock queries are documented to run up to two minutes: they get their own timeout
+        return sendJson("Redrock/query", jsonPost(uri, body, config.redrockTimeout()));
     }
 
     private HttpRequest.Builder jsonPost(URI uri, Map<String, ?> body) {
+        return jsonPost(uri, body, config.requestTimeout());
+    }
+
+    private HttpRequest.Builder jsonPost(URI uri, Map<String, ?> body, java.time.Duration timeout) {
         String json;
         try {
             json = Json.MAPPER.writeValueAsString(body);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException(e);
         }
-        return authorized(uri)
+        return authorized(uri, timeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json));
     }
 
     private HttpRequest.Builder authorized(URI uri) {
+        return authorized(uri, config.requestTimeout());
+    }
+
+    private HttpRequest.Builder authorized(URI uri, java.time.Duration timeout) {
         return HttpRequest.newBuilder(uri)
-                .timeout(config.requestTimeout())
+                .timeout(timeout)
                 .header("Accept", "application/json");
     }
 
@@ -239,7 +248,7 @@ public final class CyberArkClient {
      * cached token can be revoked before its expiry.
      */
     private JsonNode sendJson(String endpoint, HttpRequest.Builder builder) {
-        HttpResponse<String> response = send(endpoint, builder, tokens.token());
+        Received response = send(endpoint, builder, tokens.token());
         if (response.statusCode() == 401) {
             tokens.invalidate();
             response = send(endpoint, builder, tokens.token());
@@ -256,16 +265,36 @@ public final class CyberArkClient {
         return Json.parse(endpoint, status, response.body());
     }
 
-    private HttpResponse<String> send(String endpoint, HttpRequest.Builder builder, String token) {
+    private record Received(int statusCode, String body) {
+    }
+
+    /**
+     * One request whose whole response (status, headers and body) must arrive within the request's timeout: Java's
+     * request timeout covers only the status and headers, so the body is read under a {@link Deadline}.
+     */
+    private Received send(String endpoint, HttpRequest.Builder builder, String token) {
         HttpRequest request = builder.copy().setHeader("Authorization", "Bearer " + token).build();
+        java.time.Duration timeout = request.timeout().orElse(config.requestTimeout());
+        long deadline = System.nanoTime() + timeout.toNanos();
+        HttpResponse<java.io.InputStream> response;
         try {
-            return http.send(request, HttpResponse.BodyHandlers.ofString());
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException e) {
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null,
                     e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null, "interrupted", e);
+        }
+        try {
+            byte[] body = Deadline.readAll(response.body(), deadline - System.nanoTime());
+            return new Received(response.statusCode(), new String(body, StandardCharsets.UTF_8));
+        } catch (Deadline.BodyIncomplete e) {
+            throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, response.statusCode(), e.late
+                    ? "HttpTimeoutException: the whole response did not arrive within " + timeout.toSeconds() + " s ("
+                            + e.received + " bytes received)"
+                    : "the connection ended before the whole response arrived (" + e.received + " bytes received)",
+                    e);
         }
     }
 

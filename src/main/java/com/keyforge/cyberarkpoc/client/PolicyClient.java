@@ -172,7 +172,7 @@ public final class PolicyClient {
                 .timeout(config.requestTimeout())
                 .header("Accept", "application/json")
                 .GET();
-        HttpResponse<String> response = send(builder, tokens.token());
+        Received response = send(builder, tokens.token());
         if (response.statusCode() == 401) {
             tokens.invalidate();
             response = send(builder, tokens.token());
@@ -194,16 +194,35 @@ public final class PolicyClient {
         return root;
     }
 
-    private HttpResponse<String> send(HttpRequest.Builder builder, String token) {
+    private record Received(int statusCode, String body) {
+    }
+
+    /**
+     * One request whose whole response (status, headers and body) must arrive within the request timeout: Java's
+     * request timeout covers only the status and headers, so the body is read under a {@link Deadline}.
+     */
+    private Received send(HttpRequest.Builder builder, String token) {
         HttpRequest request = builder.copy().setHeader("Authorization", "Bearer " + token).build();
+        long deadline = System.nanoTime() + config.requestTimeout().toNanos();
+        HttpResponse<java.io.InputStream> response;
         try {
-            return http.send(request, HttpResponse.BodyHandlers.ofString());
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException e) {
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, ENDPOINT, null,
                     e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, ENDPOINT, null, "interrupted", e);
+        }
+        try {
+            byte[] body = Deadline.readAll(response.body(), deadline - System.nanoTime());
+            return new Received(response.statusCode(), new String(body, StandardCharsets.UTF_8));
+        } catch (Deadline.BodyIncomplete e) {
+            throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, ENDPOINT, response.statusCode(), e.late
+                    ? "HttpTimeoutException: the whole response did not arrive within "
+                            + config.requestTimeout().toSeconds() + " s (" + e.received + " bytes received)"
+                    : "the connection ended before the whole response arrived (" + e.received + " bytes received)",
+                    e);
         }
     }
 }
