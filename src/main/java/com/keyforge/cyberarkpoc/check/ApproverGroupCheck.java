@@ -85,8 +85,11 @@ public final class ApproverGroupCheck {
                                MemberOutcome outcome, boolean countsAsActive, String detail) {
     }
 
-    /** The member rows one members-API call returned for {@code roleId}, kept for storage. */
-    public record MemberRows(String roleId, List<RoleMember> members) {
+    /**
+     * The member rows one members-API call returned for {@code roleId}, kept for storage, with that call's own
+     * completeness signals ({@code FullCount}, {@code IsSoftError}) so the stored list can be reconciled.
+     */
+    public record MemberRows(String roleId, List<RoleMember> members, Integer reportedTotal, boolean softError) {
     }
 
     /**
@@ -164,7 +167,7 @@ public final class ApproverGroupCheck {
         try {
             ev.details = client.getRole(role.id());
             MemberList direct = client.getRoleMembers(role.id());
-            ev.memberRows.add(new MemberRows(role.id(), direct.members()));
+            ev.memberRows.add(new MemberRows(role.id(), direct.members(), direct.reportedTotal(), direct.softError()));
             if (!role.hasExplicitMembers()) {
                 ev.directListAuthoritative = false;
                 ev.unbounded("the role's RoleType is " + quoted(role.roleType()) + ", not PrincipalList, so its member "
@@ -258,7 +261,7 @@ public final class ApproverGroupCheck {
             return;
         }
         MemberList list = client.getRoleMembers(role.id());
-        ev.memberRows.add(new MemberRows(role.id(), list.members()));
+        ev.memberRows.add(new MemberRows(role.id(), list.members(), list.reportedTotal(), list.softError()));
         String incomplete = incompleteness(list);
         if (incomplete != null) {
             ev.unbounded("the member list of nested role " + member.name() + " may be incomplete: " + incomplete);

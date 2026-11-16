@@ -75,8 +75,10 @@ public final class CyberArkClient {
      * @param complete  {@code false} when the paging could not show that every matching role was read
      * @param fullCount the last {@code FullCount} reported (its meaning is not documented), or {@code null}
      * @param notes     why the search is incomplete, or what could not be cross-checked
+     * @param duplicates role rows that repeated a role already received (counted once in {@code roles})
      */
-    public record RoleSearch(List<Role> roles, boolean complete, int pages, Integer fullCount, List<String> notes) {
+    public record RoleSearch(List<Role> roles, boolean complete, int pages, Integer fullCount, List<String> notes,
+                             int duplicates) {
     }
 
     /**
@@ -141,7 +143,7 @@ public final class CyberArkClient {
             complete = false;
             notes.add("Redrock reported FullCount " + fullCount + " but " + roles.size() + " role(s) were received");
         }
-        return new RoleSearch(List.copyOf(roles.values()), complete, pages, fullCount, notes);
+        return new RoleSearch(List.copyOf(roles.values()), complete, pages, fullCount, notes, duplicates);
     }
 
     /** The role with this id from the Role table, or empty when the service user cannot see it. */

@@ -24,6 +24,9 @@ public final class StubHttpServer implements AutoCloseable {
     private record Reply(int status, String body) {
     }
 
+    /** The exchange attribute holding the request body (byte[]) that this server already read. */
+    public static final String REQUEST_BODY = "stub.requestBody";
+
     private final HttpServer server;
     private final Map<String, Reply> replies = new ConcurrentHashMap<>();
     private final Map<String, HttpHandler> handlers = new ConcurrentHashMap<>();
@@ -73,7 +76,8 @@ public final class StubHttpServer implements AutoCloseable {
     private void handle(HttpExchange exchange) throws IOException {
         try {
             String path = exchange.getRequestURI().getPath();
-            exchange.getRequestBody().readAllBytes();
+            // read here (so every handler finds the connection in the same state); kept for custom handlers
+            exchange.setAttribute(REQUEST_BODY, exchange.getRequestBody().readAllBytes());
             HttpHandler custom = handlers.get(path);
             if (custom != null) {
                 custom.handle(exchange);

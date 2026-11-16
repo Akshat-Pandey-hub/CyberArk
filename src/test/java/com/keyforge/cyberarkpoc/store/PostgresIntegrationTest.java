@@ -404,7 +404,7 @@ class PostgresIntegrationTest {
             assertEquals(List.of("record_uuid", "ID", "Name", "RoleType", "ReadOnly", "Description", "extracted_at"),
                     columns("ispss_role"));
             assertEquals(List.of("record_uuid", "role_id", "Guid", "Name", "Type", "IsEffective", "OrgPath", "OrgId",
-                    "extracted_at"), columns("ispss_role_member"));
+                    "missing_since", "extracted_at"), columns("ispss_role_member"));
             assertEquals(6, count("SELECT count(*) FROM " + s + ".ispss_role"), "5 matching roles + 1 nested role");
             assertEquals(17, count("SELECT count(*) FROM " + s + ".ispss_role_member"));
             assertEquals(14, count("SELECT count(*) FROM " + s + ".ispss_user"), "the missing user has no row");
