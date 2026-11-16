@@ -23,8 +23,8 @@ import java.util.StringJoiner;
 import java.util.regex.Pattern;
 
 /**
- * Read-only client for the CyberArk PVWA REST API (PAM Self-Hosted),.
- * Each endpoint is taken from its official CyberArk documentation page.
+ * Read-only client for the CyberArk PVWA REST API (PAM Self-Hosted). Each endpoint is taken from its official
+ * CyberArk documentation page.
  *
  * <p>Only two POST calls exist: Logon and Logoff. Every other call is a GET whose path must match
  * {@link #READ_PATHS}; anything else (password retrieval, account actions such as Verify/Change/Reconcile)
@@ -33,6 +33,11 @@ import java.util.regex.Pattern;
  * <p>One session per client: logon happens on the first call, the session is renewed after
  * {@link PvwaConfig#sessionRenewAfter()} (the documented default session is 20 minutes), and
  * {@link #close()} always logs off.
+ *
+ * <p>Every response must arrive in full within {@link PvwaConfig#requestTimeout()} (status, headers and body). A read
+ * that gets HTTP 429, 502, 503 or 504, or fails on the network, is retried up to {@link PvwaConfig#maxRetries()}
+ * times, waiting as the server's {@code Retry-After} says (at most {@link #MAX_RETRY_WAIT}) or 1 s, 2 s, 4 s, ...
+ * Only reads are retried; Logon and Logoff are not.
  */
 public final class PvwaClient implements AutoCloseable {
 
@@ -54,9 +59,16 @@ public final class PvwaClient implements AutoCloseable {
             Pattern.compile("/API/DiscoveredAccounts/"),
             Pattern.compile("/WebServices/PIMServices\\.svc/Accounts/[^/]+/Activities/"));
 
+    /** The statuses a read is retried on: rate limiting and a temporarily unavailable server or gateway. */
+    static final Set<Integer> RETRY_STATUSES = Set.of(429, 502, 503, 504);
+    /** The longest wait before a retry, even if the server's Retry-After asks for more. */
+    static final java.time.Duration MAX_RETRY_WAIT = java.time.Duration.ofSeconds(60);
+
     private final PvwaConfig config;
     private final HttpClient http;
     private final Clock clock;
+    private java.time.Duration retryBaseDelay = java.time.Duration.ofSeconds(1);
+    private int retries;
 
     private String sessionToken;
     private Instant loggedOnAt;
@@ -84,30 +96,84 @@ public final class PvwaClient implements AutoCloseable {
     }
 
     /**
-     * GET a documented read path with optional query parameters. The response is redacted. On HTTP 401
-     * the session is renewed once and the call retried.
+     * GET a documented read path with optional query parameters. The response is redacted. On HTTP 401 the session
+     * is renewed once and the call retried; HTTP 429 / 502 / 503 / 504 and network failures are retried as described
+     * in the class comment.
      */
     public JsonNode get(String path, Map<String, String> query) {
         if (!isAllowedReadPath(path)) {
             throw new IllegalArgumentException("not an allowed read-only PVWA path: " + path);
         }
         ensureSession();
-        HttpResponse<String> response = send(path, getRequest(path, query));
-        if (response.statusCode() == 401) {
-            relogon();
-            response = send(path, getRequest(path, query));
+        boolean renewed = false;
+        int attempt = 0;
+        Received response;
+        while (true) {
+            try {
+                response = send(path, getRequest(path, query));
+            } catch (CyberArkApiException e) {
+                if (e.kind() == CyberArkApiException.Kind.TRANSPORT && attempt < config.maxRetries()) {
+                    attempt++;
+                    waitBeforeRetry(path, attempt, null);
+                    continue;
+                }
+                throw e;
+            }
+            if (response.status() == 401 && !renewed) {
+                renewed = true;
+                relogon();
+                continue;
+            }
+            if (RETRY_STATUSES.contains(response.status()) && attempt < config.maxRetries()) {
+                attempt++;
+                waitBeforeRetry(path, attempt, response.headers().firstValue("Retry-After").orElse(null));
+                continue;
+            }
+            break;
         }
-        int status = response.statusCode();
+        int status = response.status();
         if (status == 401 || status == 403) {
             throw new CyberArkApiException(CyberArkApiException.Kind.AUTHENTICATION, path, status,
                     status == 401 ? "session token not accepted" : "the user lacks permission: "
                             + Json.snippet(response.body()));
         }
         if (status < 200 || status > 299) {
+            String retried = attempt == 0 ? "" : " (after " + attempt + " retr" + (attempt == 1 ? "y" : "ies") + ")";
             throw new CyberArkApiException(CyberArkApiException.Kind.HTTP_STATUS, path, status,
-                    Json.snippet(response.body()));
+                    (status == 429 ? "rate limited by PVWA (HTTP 429)" + retried + ": " : retried.isEmpty() ? ""
+                            : "HTTP " + status + retried + ": ") + Json.snippet(response.body()));
         }
         return SecretRedactor.redact(Json.parse(path, status, response.body())).value();
+    }
+
+    /** How many reads were retried in this client's life (rate limits, unavailable server, network failures). */
+    public int retryCount() {
+        return retries;
+    }
+
+    /** Test hook: the first retry wait when the server sends no Retry-After (doubles each time). */
+    PvwaClient retryBaseDelay(java.time.Duration delay) {
+        this.retryBaseDelay = delay;
+        return this;
+    }
+
+    private void waitBeforeRetry(String path, int attempt, String retryAfter) {
+        retries++;
+        long millis = retryBaseDelay.toMillis() << Math.min(attempt - 1, 10);
+        if (retryAfter != null) {
+            try {
+                millis = Math.max(0, Long.parseLong(retryAfter.trim())) * 1000;
+            } catch (NumberFormatException ignored) {
+                // an HTTP-date Retry-After: use the backoff instead
+            }
+        }
+        millis = Math.min(millis, MAX_RETRY_WAIT.toMillis());
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, path, null, "interrupted", e);
+        }
     }
 
     static boolean isAllowedReadPath(String path) {
@@ -172,8 +238,8 @@ public final class PvwaClient implements AutoCloseable {
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
-        HttpResponse<String> response = send("logon", request);
-        int status = response.statusCode();
+        Received response = send("logon", request);
+        int status = response.status();
         if (status < 200 || status > 299) {
             // The request held the password, so only the server's own message is reported.
             throw new CyberArkApiException(
@@ -229,9 +295,18 @@ public final class PvwaClient implements AutoCloseable {
                 .build();
     }
 
-    private HttpResponse<String> send(String endpoint, HttpRequest request) {
+    private record Received(int status, java.net.http.HttpHeaders headers, String body) {
+    }
+
+    /**
+     * One request whose whole response (status, headers and body) must arrive within the request timeout: Java's
+     * request timeout covers only the status and headers, so a {@link Deadline} stops a body still arriving after it.
+     */
+    private Received send(String endpoint, HttpRequest request) {
+        long deadline = System.nanoTime() + config.requestTimeout().toNanos();
+        HttpResponse<java.io.InputStream> response;
         try {
-            return http.send(request, HttpResponse.BodyHandlers.ofString());
+            response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
         } catch (IOException e) {
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null,
                     e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()), e);
@@ -239,5 +314,23 @@ public final class PvwaClient implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, null, "interrupted", e);
         }
+        java.io.ByteArrayOutputStream received = new java.io.ByteArrayOutputStream();
+        Deadline watch = new Deadline(Thread.currentThread(), response.body(), Math.max(1, deadline - System.nanoTime()));
+        try (java.io.InputStream in = response.body()) {
+            in.transferTo(received);
+            if (watch.stop()) { // the deadline fired just as the last byte arrived: treat as late
+                throw new IOException("deadline");
+            }
+        } catch (IOException e) {
+            boolean late = watch.stop();
+            throw new CyberArkApiException(CyberArkApiException.Kind.TRANSPORT, endpoint, response.statusCode(), late
+                    ? "HttpTimeoutException: the whole response did not arrive within "
+                            + config.requestTimeout().toSeconds() + " s (" + received.size() + " bytes received)"
+                    : "the connection ended before the whole response arrived (" + received.size()
+                            + " bytes received): " + e.getClass().getSimpleName(), e);
+        } finally {
+            watch.stop();
+        }
+        return new Received(response.statusCode(), response.headers(), received.toString(StandardCharsets.UTF_8));
     }
 }

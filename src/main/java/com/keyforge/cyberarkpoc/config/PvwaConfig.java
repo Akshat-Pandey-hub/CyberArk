@@ -19,13 +19,18 @@ public record PvwaConfig(
         String username,
         String password,
         Duration requestTimeout,
-        Duration sessionRenewAfter) {
+        Duration sessionRenewAfter,
+        int maxRetries) {
 
     public static final String ENV_BASE_URL = "CYBERARK_PVWA_BASE_URL";
     public static final String ENV_AUTH_METHOD = "CYBERARK_PVWA_AUTH_METHOD";
     public static final String ENV_USERNAME = "CYBERARK_PVWA_USERNAME";
     public static final String ENV_PASSWORD = "CYBERARK_PVWA_PASSWORD";
     public static final String ENV_TIMEOUT_SECONDS = "CYBERARK_TIMEOUT_SECONDS";
+    /** How often a read is retried after HTTP 429 / 502 / 503 / 504 or a network failure (0 = never). */
+    public static final String ENV_MAX_RETRIES = "CYBERARK_PVWA_MAX_RETRIES";
+    public static final int DEFAULT_MAX_RETRIES = 2;
+    public static final int MAX_RETRIES_LIMIT = 10;
 
     /** Logon methods on the official Logon page (2nd gen API). */
     public static final Map<String, String> AUTH_METHODS = Map.of(
@@ -70,6 +75,16 @@ public record PvwaConfig(
         if (requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new ConfigException(ENV_TIMEOUT_SECONDS + " must be positive");
         }
+        if (maxRetries < 0 || maxRetries > MAX_RETRIES_LIMIT) {
+            throw new ConfigException(ENV_MAX_RETRIES + " must be between 0 and " + MAX_RETRIES_LIMIT + " but was: "
+                    + maxRetries);
+        }
+    }
+
+    /** Settings with the default number of retries. */
+    public PvwaConfig(URI baseUrl, String authMethod, String username, String password, Duration requestTimeout,
+                      Duration sessionRenewAfter) {
+        this(baseUrl, authMethod, username, password, requestTimeout, sessionRenewAfter, DEFAULT_MAX_RETRIES);
     }
 
     public static PvwaConfig fromEnvironment(Map<String, String> env) {
@@ -92,14 +107,23 @@ public record PvwaConfig(
                 throw new ConfigException(ENV_TIMEOUT_SECONDS + " must be a whole number of seconds");
             }
         }
+        int retries = DEFAULT_MAX_RETRIES;
+        String r = env.get(ENV_MAX_RETRIES);
+        if (r != null && !r.isBlank()) {
+            try {
+                retries = Integer.parseInt(r.trim());
+            } catch (NumberFormatException e) {
+                throw new ConfigException(ENV_MAX_RETRIES + " must be a whole number");
+            }
+        }
         return new PvwaConfig(uri, env.get(ENV_AUTH_METHOD), env.get(ENV_USERNAME), env.get(ENV_PASSWORD),
-                timeout, DEFAULT_RENEW_AFTER);
+                timeout, DEFAULT_RENEW_AFTER, retries);
     }
 
     /** Never prints the password. */
     @Override
     public String toString() {
         return "PvwaConfig[baseUrl=" + baseUrl + ", authMethod=" + authMethod + ", username=" + username
-                + ", password=***, requestTimeout=" + requestTimeout + "]";
+                + ", password=***, requestTimeout=" + requestTimeout + ", maxRetries=" + maxRetries + "]";
     }
 }

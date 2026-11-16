@@ -10,6 +10,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Pages a PVWA list endpoint that uses the documented {@code offset} / {@code limit} parameters and returns
@@ -56,7 +57,18 @@ public final class OffsetPager {
     /** As above, for an endpoint whose paging parameters and response fields have other documented names. */
     public static FetchResult fetchAll(PvwaClient client, String path, Map<String, String> extraQuery, int limit,
                                        String idField, ExtractionSettings settings, Shape shape) {
+        return fetchAll(client, path, extraQuery, limit, idField, settings, shape, null);
+    }
+
+    /**
+     * As above; with a {@code sink}, each new record is handed to it as its page arrives instead of being kept, so
+     * memory does not grow with the number of records (only their ids are kept, to drop duplicates).
+     */
+    public static FetchResult fetchAll(PvwaClient client, String path, Map<String, String> extraQuery, int limit,
+                                       String idField, ExtractionSettings settings, Shape shape,
+                                       Consumer<JsonNode> sink) {
         List<JsonNode> records = new ArrayList<>();
+        int delivered = 0;
         Set<String> ids = new LinkedHashSet<>();
         List<String> notes = new ArrayList<>();
         int missingId = 0;
@@ -97,7 +109,12 @@ public final class OffsetPager {
                 if (id == null || id.isNull() || id.asText().isBlank()) {
                     missingId++;
                 } else if (ids.add(id.asText())) {
-                    records.add(item);
+                    if (sink == null) {
+                        records.add(item);
+                    } else {
+                        sink.accept(item);
+                    }
+                    delivered++;
                     added++;
                 } else {
                     duplicates++;
@@ -123,13 +140,13 @@ public final class OffsetPager {
         if (missingId > 0) {
             notes.add(missingId + " record(s) had no '" + idField + "' and were not stored");
         }
-        int seen = records.size() + missingId;
+        int seen = delivered + missingId;
         if (complete && reportedTotal != null && reportedTotal != seen) {
             complete = false;
             notes.add("the API reported " + shape.totalField() + " " + reportedTotal + " but " + seen
                     + " record(s) were received");
         }
-        return new FetchResult(records, missingId, complete, reportedTotal, pages, notes);
+        return new FetchResult(records, missingId, complete, reportedTotal, pages, notes, delivered);
     }
 
     private static void pause(long ms) {

@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Reads a PVWA list endpoint that has no paging and returns everything in one response, e.g. Get target platforms:
@@ -30,6 +31,13 @@ public final class UnpagedList {
      */
     public static FetchResult fetch(PvwaClient client, String path, Map<String, String> query, String arrayField,
                                     String totalField, String idField) {
+        return fetch(client, path, query, arrayField, totalField, idField, null);
+    }
+
+    /** As above; with a {@code sink}, each record is handed to it instead of being kept. */
+    public static FetchResult fetch(PvwaClient client, String path, Map<String, String> query, String arrayField,
+                                    String totalField, String idField, Consumer<JsonNode> sink) {
+        int delivered = 0;
         JsonNode body = client.get(path, query);
         JsonNode items = body.get(arrayField);
         if (items == null || !items.isArray()) {
@@ -46,7 +54,12 @@ public final class UnpagedList {
             if (id == null || id.isNull() || id.asText().isBlank()) {
                 missingId++;
             } else if (ids.add(id.asText())) {
-                records.add(item);
+                if (sink == null) {
+                    records.add(item);
+                } else {
+                    sink.accept(item);
+                }
+                delivered++;
             } else {
                 duplicates++;
             }
@@ -62,12 +75,12 @@ public final class UnpagedList {
         JsonNode t = body.get(totalField);
         if (t != null && t.canConvertToInt()) {
             total = t.asInt();
-            int seen = records.size() + missingId;
+            int seen = delivered + missingId;
             if (total != seen) {
                 complete = false;
                 notes.add("the API reported " + totalField + " " + total + " but " + seen + " record(s) were received");
             }
         }
-        return new FetchResult(records, missingId, complete, total, 1, notes);
+        return new FetchResult(records, missingId, complete, total, 1, notes, delivered);
     }
 }

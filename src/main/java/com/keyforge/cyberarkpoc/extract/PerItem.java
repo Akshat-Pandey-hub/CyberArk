@@ -5,6 +5,7 @@ import com.keyforge.cyberarkpoc.client.CyberArkApiException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -36,10 +37,12 @@ final class PerItem {
      * @param listLabel how the parent list is named in notes, e.g. {@code Safes list}
      * @param itemLabel how one parent is named in notes, e.g. {@code Safe}
      * @param child     reads the child records of one parent id
+     * @param sink      if not {@code null}, receives every child record instead of the result's list
      */
     static FetchResult each(FetchResult parents, String idField, String listLabel, String itemLabel,
-                            Function<String, FetchResult> child) {
+                            Function<String, FetchResult> child, Consumer<JsonNode> sink) {
         List<JsonNode> records = new ArrayList<>();
+        int count = 0;
         List<String> notes = new ArrayList<>();
         parents.notes().forEach(n -> notes.add(listLabel + ": " + n));
         boolean complete = parents.complete();
@@ -57,7 +60,12 @@ final class PerItem {
             }
             try {
                 FetchResult result = child.apply(id);
-                records.addAll(result.records());
+                if (sink == null) {
+                    records.addAll(result.records());
+                } else {
+                    result.records().forEach(sink); // a child that kept its records in a list
+                }
+                count += result.recordCount();
                 missingId += result.missingId();
                 pages += result.pages();
                 if (!result.complete()) {
@@ -76,6 +84,6 @@ final class PerItem {
         if (firstFailure != null && failed == parents.records().size()) {
             throw firstFailure; // nothing could be read
         }
-        return new FetchResult(records, missingId, complete, null, pages, notes);
+        return new FetchResult(records, missingId, complete, null, pages, notes, count);
     }
 }

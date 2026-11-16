@@ -9,6 +9,7 @@ import com.keyforge.cyberarkpoc.config.ConfigException;
 import com.keyforge.cyberarkpoc.extract.ExtractionRunner;
 import com.keyforge.cyberarkpoc.extract.ExtractionSettings;
 import com.keyforge.cyberarkpoc.extract.PvwaExtraction;
+import com.keyforge.cyberarkpoc.extract.ResponseRunner;
 import com.keyforge.cyberarkpoc.store.DbConfig;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -55,11 +56,22 @@ public final class ExtractionRestServer {
     public record Route(String description, Function<PvwaClient, Map<String, Object>> run) {
     }
 
-    /**
-     * The PVWA routes: the health check, and one extraction route per {@link PvwaExtraction} (fetch all pages,
-     * store in PostgreSQL, return the run summary and the records). The database settings are read per run.
-     */
+    /** The PVWA routes, with the default temporary-file settings for the response-only routes. */
     public static Map<String, Route> pvwaRoutes(Supplier<DbConfig> db, ExtractionSettings settings) {
+        return pvwaRoutes(db, settings, ResponseBody.Settings::defaults);
+    }
+
+    /**
+     * The PVWA routes: the health check, and two routes per {@link PvwaExtraction}:
+     * <ul>
+     *   <li>{@code pvwa/<name>} (database mode): fetch all pages, store in PostgreSQL, return the run summary and the
+     *       records. The database settings are read per run.</li>
+     *   <li>{@code pvwa/json/<name>} (response-only mode): fetch all pages and return the records as JSON; no
+     *       database is used ({@link ResponseRunner}).</li>
+     * </ul>
+     */
+    public static Map<String, Route> pvwaRoutes(Supplier<DbConfig> db, ExtractionSettings settings,
+                                                Supplier<ResponseBody.Settings> spool) {
         Map<String, Route> routes = new LinkedHashMap<>();
         routes.put("pvwa/verify", new Route(
                 "Health check: GET /WebServices/PIMServices.svc/Verify/ (logon, call, logoff); stores nothing",
@@ -72,6 +84,11 @@ public final class ExtractionRestServer {
         for (PvwaExtraction extraction : PvwaExtraction.all(settings)) {
             routes.put(extraction.command().replaceFirst("^pvwa-", "pvwa/"), new Route(extraction.description(),
                     client -> ExtractionRunner.run(extraction, client, db.get())));
+        }
+        for (PvwaExtraction extraction : PvwaExtraction.all(settings)) {
+            routes.put(extraction.command().replaceFirst("^pvwa-", "pvwa/json/"), new Route(
+                    extraction.description().replaceFirst(" -> \\S+$", " -> JSON response (no database)"),
+                    client -> ResponseRunner.run(extraction, client, spool.get())));
         }
         return routes;
     }
@@ -358,6 +375,9 @@ public final class ExtractionRestServer {
                     + (e.getMessage() == null ? "" : ": " + e.getMessage())));
         }
         body.put("logons", client.logonCount());
+        if (client.retryCount() > 0) {
+            body.put("retries", client.retryCount());
+        }
         body.put("logoff", client.logoffProblem() == null ? "ok" : client.logoffProblem());
         body.put("ended_at", Instant.now().toString());
         return body;

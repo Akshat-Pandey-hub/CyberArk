@@ -50,15 +50,15 @@ public final class Main {
         switch (args[0]) {
             case "mock" -> runMock(args);
             case "check" -> System.exit(runCheck());
-            case "pvwa-verify" -> System.exit(runPvwaRoute("pvwa/verify", true));
-            case "pvwa-safes" -> System.exit(runPvwaRoute("pvwa/safes", false));
-            case "pvwa-accounts" -> System.exit(runPvwaRoute("pvwa/accounts", false));
-            case "pvwa-safe-members" -> System.exit(runPvwaRoute("pvwa/safe-members", false));
-            case "pvwa-target-platforms" -> System.exit(runPvwaRoute("pvwa/target-platforms", false));
-            case "pvwa-platform-details" -> System.exit(runPvwaRoute("pvwa/platform-details", false));
-            case "pvwa-users" -> System.exit(runPvwaRoute("pvwa/users", false));
-            case "pvwa-user-groups" -> System.exit(runPvwaRoute("pvwa/user-groups", false));
-            case "pvwa-discovered-accounts" -> System.exit(runPvwaRoute("pvwa/discovered-accounts", false));
+            case "pvwa-verify" -> System.exit(runPvwaRoute("pvwa/verify", true, args));
+            case "pvwa-safes" -> System.exit(runPvwaRoute("pvwa/safes", false, args));
+            case "pvwa-accounts" -> System.exit(runPvwaRoute("pvwa/accounts", false, args));
+            case "pvwa-safe-members" -> System.exit(runPvwaRoute("pvwa/safe-members", false, args));
+            case "pvwa-target-platforms" -> System.exit(runPvwaRoute("pvwa/target-platforms", false, args));
+            case "pvwa-platform-details" -> System.exit(runPvwaRoute("pvwa/platform-details", false, args));
+            case "pvwa-users" -> System.exit(runPvwaRoute("pvwa/users", false, args));
+            case "pvwa-user-groups" -> System.exit(runPvwaRoute("pvwa/user-groups", false, args));
+            case "pvwa-discovered-accounts" -> System.exit(runPvwaRoute("pvwa/discovered-accounts", false, args));
             case ApproverGroupRun.COMMAND -> System.exit(runStandalone(APPROVER_GROUPS_ROUTE, approverGroupsRoute()));
             case PolicyHealthRun.COMMAND -> System.exit(runStandalone(POLICY_HEALTH_ROUTE, policyHealthRoute()));
             case "cloud-token", "cloud-redrock", "cloud-role", "cloud-policies" -> System.exit(runCloud(args));
@@ -142,10 +142,27 @@ public final class Main {
 
     /**
      * Runs one route from the command line, exactly as {@code start-rest} would. Extraction routes print the run
-     * summary without the records (they are in PostgreSQL). Exit codes follow Part 2: 0 SUCCESS,
-     * 6 COMPLETED_WITH_FAILURES, 7 INCOMPLETE, 2 configuration, 1 failed.
+     * summary without the records (they are in PostgreSQL). With {@code output=json} (response-only mode) no database
+     * is used and the records are printed as JSON. Exit codes follow Part 2: 0 SUCCESS, 6 COMPLETED_WITH_FAILURES,
+     * 7 INCOMPLETE, 2 configuration, 1 failed.
      */
-    private static int runPvwaRoute(String route, boolean printData) {
+    private static int runPvwaRoute(String route, boolean printData, String[] args) {
+        boolean json = false;
+        for (int i = 1; i < args.length; i++) {
+            if (args[i].equals("output=json")) {
+                json = true;
+            } else if (args[i].equals("output=database")) {
+                json = false;
+            } else {
+                System.err.println("Unknown argument: " + args[i]
+                        + " (the only option is output=json for response-only mode, or output=database, the default)");
+                return 2;
+            }
+        }
+        if (json && !route.equals("pvwa/verify")) {
+            route = route.replaceFirst("^pvwa/", "pvwa/json/");
+            printData = true;
+        }
         PvwaConfig config;
         ExtractionSettings settings;
         try {
@@ -155,17 +172,27 @@ public final class Main {
             System.err.println("Configuration error: " + e.getMessage());
             return 2;
         }
-        System.out.println("Using " + config);
+        // in response-only mode stdout carries only the JSON, so it can be saved or piped as it is
+        (json ? System.err : System.out).println("Using " + config);
         Map<String, Object> result = ExtractionRestServer.run(route,
-                ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), settings).get(route),
+                ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), settings,
+                        () -> com.keyforge.cyberarkpoc.client.ResponseBody.Settings.fromEnvironment(System.getenv()))
+                        .get(route),
                 () -> new PvwaClient(config));
         if (!printData) {
             result.remove("records");
         }
         try {
-            System.out.println(new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(result));
+            // streamed to stdout: a large record list is copied from its temporary file, not built in memory
+            new ObjectMapper().writerWithDefaultPrettyPrinter()
+                    .without(com.fasterxml.jackson.core.JsonGenerator.Feature.AUTO_CLOSE_TARGET)
+                    .writeValue(System.out, result);
+            System.out.println();
         } catch (IOException e) {
-            System.out.println(result);
+            System.err.println("Could not write the result: " + e.getMessage());
+            return 1;
+        } finally {
+            com.keyforge.cyberarkpoc.client.ResponseBody.release(result);
         }
         return switch (String.valueOf(result.get("status"))) {
             case "SUCCESS" -> 0;
@@ -286,7 +313,8 @@ public final class Main {
             return;
         }
         Map<String, ExtractionRestServer.Route> routes =
-                ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), extraction);
+                ExtractionRestServer.pvwaRoutes(() -> DbConfig.fromEnvironment(System.getenv()), extraction,
+                        () -> com.keyforge.cyberarkpoc.client.ResponseBody.Settings.fromEnvironment(System.getenv()));
         Map<String, ExtractionRestServer.StandaloneRoute> standalone = new java.util.LinkedHashMap<>();
         standalone.put(APPROVER_GROUPS_ROUTE, approverGroupsRoute());
         standalone.put(POLICY_HEALTH_ROUTE, policyHealthRoute());
@@ -335,6 +363,8 @@ public final class Main {
                 + "(needs Audit users) into PostgreSQL");
         System.err.println("  java -jar cyberark-poc.jar pvwa-discovered-accounts extract the pending discovered "
                 + "accounts (needs Vault Admins or PVWAAccountsFeedAdmins) into PostgreSQL");
+        System.err.println("  java -jar cyberark-poc.jar pvwa-<name> output=json   any pvwa-* extraction above in "
+                + "response-only mode: all pages returned as JSON, no PostgreSQL (CYBERARK_PVWA_* env vars only)");
         System.err.println("  java -jar cyberark-poc.jar " + ApproverGroupRun.COMMAND + " use case 1: approver roles "
                 + "(CYBERARK_IDENTITY_BASE_URL, CYBERARK_CLIENT_ID/SECRET + PG_* env vars)");
         System.err.println("  java -jar cyberark-poc.jar " + PolicyHealthRun.COMMAND + " use case 2: policies in Error "

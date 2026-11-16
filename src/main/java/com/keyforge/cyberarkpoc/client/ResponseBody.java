@@ -288,7 +288,7 @@ public final class ResponseBody implements AutoCloseable {
     }
 
     /** An output stream that keeps the first bytes in memory and moves to a temporary file when they exceed it. */
-    static final class Writer extends OutputStream {
+    public static final class Writer extends OutputStream {
         private final Settings settings;
         private ByteArrayOutputStream memory = new ByteArrayOutputStream();
         private Path file;
@@ -297,11 +297,11 @@ public final class ResponseBody implements AutoCloseable {
         private long nextSpaceCheck;
         private boolean finished;
 
-        Writer(Settings settings) {
+        public Writer(Settings settings) {
             this.settings = settings;
         }
 
-        long size() {
+        public long size() {
             return size;
         }
 
@@ -384,7 +384,7 @@ public final class ResponseBody implements AutoCloseable {
         }
 
         /** The finished body; after this, closing the writer no longer deletes anything. */
-        ResponseBody finish() throws IOException {
+        public ResponseBody finish() throws IOException {
             if (out != null) {
                 try {
                     out.close();

@@ -6,6 +6,7 @@ import com.keyforge.cyberarkpoc.client.PvwaClient;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -22,12 +23,39 @@ import java.util.function.Function;
  * @param fetch       reads all records with the given session
  */
 public record PvwaExtraction(String command, String table, String idField, List<String> keyFields,
-                             String description, Function<PvwaClient, FetchResult> fetch) {
+                             String description, Fetcher fetch) {
+
+    /**
+     * Reads all records with the given session. With a {@code sink}, each record is handed to it as it arrives
+     * (response-only mode, so memory does not grow with the data); without one, the records are returned in the
+     * result's list (database mode, which needs every record to shape the table first).
+     */
+    @FunctionalInterface
+    public interface Fetcher {
+        FetchResult apply(PvwaClient client, Consumer<JsonNode> sink);
+
+        default FetchResult apply(PvwaClient client) {
+            return apply(client, null);
+        }
+    }
 
     /** An extraction whose records are identified by {@code idField} alone. */
+    public PvwaExtraction(String command, String table, String idField, String description, Fetcher fetch) {
+        this(command, table, idField, List.of(idField), description, fetch);
+    }
+
+    /** As above, for a fetch that always returns its records in a list; a sink then receives them afterwards. */
     public PvwaExtraction(String command, String table, String idField, String description,
                           Function<PvwaClient, FetchResult> fetch) {
-        this(command, table, idField, List.of(idField), description, fetch);
+        this(command, table, idField, List.of(idField), description, (client, sink) -> {
+            FetchResult result = fetch.apply(client);
+            if (sink == null) {
+                return result;
+            }
+            result.records().forEach(sink);
+            return new FetchResult(List.of(), result.missingId(), result.complete(), result.reportedTotal(),
+                    result.pages(), result.notes(), result.recordCount());
+        });
     }
 
     /**
@@ -40,8 +68,8 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction safes(ExtractionSettings settings) {
         return new PvwaExtraction("pvwa-safes", "pvwa_safe", "safeUrlId",
                 "Safes: GET /API/Safes/ (all pages) -> pvwa_safe",
-                client -> OffsetPager.fetchAll(client, "/API/Safes/", Map.of(), settings.pageSizeOr(25),
-                        "safeUrlId", settings));
+                (client, sink) -> OffsetPager.fetchAll(client, "/API/Safes/", Map.of(), settings.pageSizeOr(25),
+                        "safeUrlId", settings, OffsetPager.VALUE_COUNT, sink));
     }
 
     /**
@@ -55,8 +83,8 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction accounts(ExtractionSettings settings) {
         return new PvwaExtraction("pvwa-accounts", "pvwa_account", "id",
                 "Accounts: GET /API/Accounts (all pages, secrets removed) -> pvwa_account",
-                client -> OffsetPager.fetchAll(client, "/API/Accounts", Map.of(), settings.pageSizeOr(50), "id",
-                        settings));
+                (client, sink) -> OffsetPager.fetchAll(client, "/API/Accounts", Map.of(), settings.pageSizeOr(50),
+                        "id", settings, OffsetPager.VALUE_COUNT, sink));
     }
 
     /**
@@ -75,15 +103,19 @@ public record PvwaExtraction(String command, String table, String idField, List<
         return new PvwaExtraction("pvwa-safe-members", "pvwa_safe_member", "memberId",
                 List.of("safeUrlId", "memberId"),
                 "Safe members: GET /API/Safes/{SafeUrlId}/Members/ for every Safe (all pages) -> pvwa_safe_member",
-                client -> fetchSafeMembers(client, settings));
+                (client, sink) -> fetchSafeMembers(client, settings, sink));
     }
 
     static FetchResult fetchSafeMembers(PvwaClient client, ExtractionSettings settings) {
+        return fetchSafeMembers(client, settings, null);
+    }
+
+    static FetchResult fetchSafeMembers(PvwaClient client, ExtractionSettings settings, Consumer<JsonNode> sink) {
         FetchResult safes = OffsetPager.fetchAll(client, "/API/Safes/", Map.of(), settings.pageSizeOr(25),
-                "safeUrlId", settings);
+                "safeUrlId", settings); // the parent list is kept; only the members go to the sink
         return PerItem.each(safes, "safeUrlId", "Safes list", "Safe",
                 safeUrlId -> OffsetPager.fetchAll(client, "/API/Safes/" + safeUrlId + "/Members/", Map.of(),
-                        settings.pageSizeOr(25), "memberId", settings));
+                        settings.pageSizeOr(25), "memberId", settings, OffsetPager.VALUE_COUNT, sink), sink);
     }
 
     /**
@@ -101,8 +133,8 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction targetPlatforms() {
         return new PvwaExtraction("pvwa-target-platforms", "pvwa_target_platform", "PlatformID",
                 "Target platforms: GET /API/platforms/targets/ (one response) -> pvwa_target_platform",
-                client -> UnpagedList.fetch(client, "/API/platforms/targets/", Map.of(), "Platforms", "Total",
-                        "PlatformID"));
+                (client, sink) -> UnpagedList.fetch(client, "/API/platforms/targets/", Map.of(), "Platforms",
+                        "Total", "PlatformID", sink));
     }
 
     /**
@@ -119,14 +151,18 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction platformDetails() {
         return new PvwaExtraction("pvwa-platform-details", "pvwa_platform_detail", "PlatformID",
                 "Platform details: GET /API/Platforms/{PlatformID}/ for every target platform -> pvwa_platform_detail",
-                PvwaExtraction::fetchPlatformDetails);
+                (Fetcher) PvwaExtraction::fetchPlatformDetails);
     }
 
     static FetchResult fetchPlatformDetails(PvwaClient client) {
+        return fetchPlatformDetails(client, null);
+    }
+
+    static FetchResult fetchPlatformDetails(PvwaClient client, Consumer<JsonNode> sink) {
         FetchResult platforms = UnpagedList.fetch(client, "/API/platforms/targets/", Map.of(), "Platforms", "Total",
-                "PlatformID");
+                "PlatformID"); // the parent list is kept; only the details go to the sink
         return PerItem.each(platforms, "PlatformID", "Platforms list", "Platform",
-                platformId -> single(client.get("/API/Platforms/" + platformId + "/", Map.of()), "PlatformID"));
+                platformId -> single(client.get("/API/Platforms/" + platformId + "/", Map.of()), "PlatformID"), sink);
     }
 
     /** One object response as a result of one record, or of one record without its id. */
@@ -159,8 +195,8 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction users(ExtractionSettings settings) {
         return new PvwaExtraction("pvwa-users", "pvwa_user", "id",
                 "Users: GET /API/Users/?ExtendedDetails=true (all pages) -> pvwa_user",
-                client -> OffsetPager.fetchAll(client, "/API/Users/", Map.of("ExtendedDetails", "true"),
-                        settings.pageSizeOr(1000), "id", settings, USERS_SHAPE));
+                (client, sink) -> OffsetPager.fetchAll(client, "/API/Users/", Map.of("ExtendedDetails", "true"),
+                        settings.pageSizeOr(1000), "id", settings, USERS_SHAPE, sink));
     }
 
     /**
@@ -175,8 +211,8 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction userGroups(ExtractionSettings settings) {
         return new PvwaExtraction("pvwa-user-groups", "pvwa_user_group", "id",
                 "User groups: GET /API/UserGroups/?includeMembers=true (all pages) -> pvwa_user_group",
-                client -> OffsetPager.fetchAll(client, "/API/UserGroups/", Map.of("includeMembers", "true"),
-                        settings.pageSizeOr(1000), "id", settings));
+                (client, sink) -> OffsetPager.fetchAll(client, "/API/UserGroups/", Map.of("includeMembers", "true"),
+                        settings.pageSizeOr(1000), "id", settings, OffsetPager.VALUE_COUNT, sink));
     }
 
     /** Always added to the run's notes, so a short or empty result is never read as "no other accounts exist". */
@@ -198,13 +234,13 @@ public record PvwaExtraction(String command, String table, String idField, List<
     public static PvwaExtraction discoveredAccounts(ExtractionSettings settings) {
         return new PvwaExtraction("pvwa-discovered-accounts", "pvwa_discovered_account", "id",
                 "Discovered accounts (pending only): GET /API/DiscoveredAccounts/ (all pages) -> pvwa_discovered_account",
-                client -> {
+                (client, sink) -> {
                     FetchResult r = OffsetPager.fetchAll(client, "/API/DiscoveredAccounts/", Map.of(),
-                            settings.pageSizeOr(100), "id", settings);
+                            settings.pageSizeOr(100), "id", settings, OffsetPager.VALUE_COUNT, sink);
                     List<String> notes = new java.util.ArrayList<>(r.notes());
                     notes.add(DISCOVERY_SCOPE_NOTE);
                     return new FetchResult(r.records(), r.missingId(), r.complete(), r.reportedTotal(), r.pages(),
-                            notes);
+                            notes, r.recordCount());
                 });
     }
 
