@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Parses Identity responses per docs/API_CONTRACT.md.
+ * Parses Identity responses (documented response shapes).
  *
  * <ul>
  *   <li>Redrock (official "Use queries"): {@code {"success": .., "Result": {"Count", "FullCount", "Results":

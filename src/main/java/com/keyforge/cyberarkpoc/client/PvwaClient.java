@@ -23,8 +23,8 @@ import java.util.StringJoiner;
 import java.util.regex.Pattern;
 
 /**
- * Read-only client for the CyberArk PVWA REST API (PAM Self-Hosted), following
- * docs/API_CONTRACT_PVWA.md (each endpoint taken from the official documentation page named there).
+ * Read-only client for the CyberArk PVWA REST API (PAM Self-Hosted),.
+ * Each endpoint is taken from its official CyberArk documentation page.
  *
  * <p>Only two POST calls exist: Logon and Logoff. Every other call is a GET whose path must match
  * {@link #READ_PATHS}; anything else (password retrieval, account actions such as Verify/Change/Reconcile)

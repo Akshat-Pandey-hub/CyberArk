@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The two documented role-members shapes (docs/API_CONTRACT.md §6) and the malformed responses that must fail
+ * The two documented role-members shapes and the malformed responses that must fail
  * instead of reading as an empty membership.
  */
 class RoleMembersParsingTest {

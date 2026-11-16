@@ -28,7 +28,7 @@ import java.util.regex.Pattern;
 /**
  * A local stand-in for CyberArk that answers the six calls of the POC with FABRICATED data.
  *
- * <p>Response shapes follow docs/API_CONTRACT.md, including the fields marked ASSUMED there. Every
+ * <p>Response shapes follow the official CyberArk API reference and SDK. Every
  * response carries the header {@value #MOCK_HEADER} and a top-level {@value #MOCK_FIELD} field so it
  * can never be mistaken for a tenant response.
  *
@@ -50,7 +50,7 @@ public final class MockCyberArkServer implements AutoCloseable {
     public static final String MOCK_HEADER = "X-Mock-Data";
     public static final String MOCK_FIELD = "_mock";
     public static final String MOCK_LABEL =
-            "FABRICATED sample shaped per docs/API_CONTRACT.md - not a real CyberArk tenant response";
+            "FABRICATED sample shaped per the CyberArk API reference - not a real CyberArk tenant response";
 
     /** Mock-only test credentials. They work nowhere else. */
     public static final String MOCK_CLIENT_ID = "mock-client";
@@ -121,7 +121,7 @@ public final class MockCyberArkServer implements AutoCloseable {
     private static final Pattern ROLE_BY_ID_QUERY =
             Pattern.compile("(?is)\\bFROM\\s+Role\\s+WHERE\\s+ID\\s*=\\s*'((?:[^']|'')*)'");
 
-    /** The two documented role-members response shapes (docs/API_CONTRACT.md §6). */
+    /** The two documented role-members response shapes. */
     public enum MemberShape { FLAT, NESTED }
 
     private volatile MemberShape memberShape = MemberShape.FLAT;

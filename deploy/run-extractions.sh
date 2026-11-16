@@ -20,7 +20,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-# Optional: trust the client's internal certificate authority (see HANDOVER.md, "Certificate trust").
+# Optional: trust the client's internal certificate authority (JAVA_TRUSTSTORE in the settings file).
 JAVA_OPTS=()
 if [ -n "${JAVA_TRUSTSTORE:-}" ]; then
   JAVA_OPTS+=("-Djavax.net.ssl.trustStore=${JAVA_TRUSTSTORE}" "-Djavax.net.ssl.trustStoreType=PKCS12")

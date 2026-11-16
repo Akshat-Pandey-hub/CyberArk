@@ -14,7 +14,7 @@ import java.util.Set;
 /**
  * Pages a PVWA list endpoint that uses the documented {@code offset} / {@code limit} parameters and returns
  * {@code {"value": [...], "count": n, "nextLink": "..."}} (Get all Safes, Get all Safe members, Get accounts,
- * Get groups, Get discovered accounts; see docs/API_CONTRACT_PVWA.md), or the same pattern under other documented
+ * Get groups, Get discovered accounts), or the same pattern under other documented
  * names ({@link Shape}, e.g. Get users: {@code pageOffset} / {@code pageSize} and {@code {"Users", "Total"}}).
  *
  * <p>It keeps requesting while a page is full or a {@code nextLink} is present. The result is marked

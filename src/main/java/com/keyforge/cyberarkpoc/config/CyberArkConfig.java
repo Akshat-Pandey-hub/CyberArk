@@ -8,12 +8,12 @@ import java.util.Map;
  * Connection settings for the CyberArk APIs.
  *
  * <p>The Identity base URL is configurable because the client mail puts the Identity calls on the {@code uap} host
- * while the official docs and SDK send them to the Identity host (see docs/API_CONTRACT.md). The token URL is
+ * while the official docs and SDK send them to the Identity host. The token URL is
  * configurable on its own for the same reason; by default it is the Identity base URL plus
  * {@value #DEFAULT_TOKEN_PATH}. The policies (Use Case 2) have their own settings: {@link PolicyConfig}.
  *
  * <p>Two documented ways to get the Identity token ({@link AuthMethod}); which one the client's tenant accepts for
- * Redrock and the Roles API is not settled by the documentation (docs/API_CONTRACT.md), so it is a setting.
+ * Redrock and the Roles API is not settled by the documentation, so it is a setting.
  *
  * @param authMethod     {@code platform}: {@code POST /oauth2/platformtoken} ("Create an API token");
  *                       {@code oauth2-app}: {@code POST /oauth2/token/<app id>} with Basic auth ("Use queries")
@@ -64,7 +64,7 @@ public record CyberArkConfig(
     }
 
     /**
-     * Which documented role-members API to call (docs/API_CONTRACT.md §6): {@code roles} =
+     * Which documented role-members API to call: {@code roles} =
      * {@code POST /Roles/GetRoleMembers?name=} (Roles API reference, SDK; the default) or {@code saasmanage} =
      * {@code POST /SaasManage/GetRoleMembers?Name=} (data dictionary). Both response shapes are accepted either way;
      * switch once the client confirms which path their tenant answers.

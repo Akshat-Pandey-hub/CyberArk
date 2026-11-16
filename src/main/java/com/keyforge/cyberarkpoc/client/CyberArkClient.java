@@ -24,7 +24,7 @@ import java.util.Optional;
 
 /**
  * Read-only client for the Identity calls Use Case 1 needs (the policies of Use Case 2: {@link PolicyClient}). Endpoint paths and response
- * fields follow docs/API_CONTRACT.md, where each one is marked verified or assumed.
+ * fields follow the official CyberArk API reference.
  *
  * <p>Every failure is thrown as {@link CyberArkApiException}; nothing is swallowed, so a caller can
  * never mistake a failed call for an empty result.
@@ -163,7 +163,7 @@ public final class CyberArkClient {
     }
 
     /**
-     * The members of a role through the configured members API (docs/API_CONTRACT.md §6). {@code ROLES}: the
+     * The members of a role through the configured members API. {@code ROLES}: the
      * Roles API reference passes the role UUID as the {@code name} query parameter and the SDK sends
      * {@code {"Name": ..}} in the body, so both are sent. {@code SAASMANAGE}: the data dictionary passes it as
      * {@code Name} in the query. Either documented response shape is accepted.

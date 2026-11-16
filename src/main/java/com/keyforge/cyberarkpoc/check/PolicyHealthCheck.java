@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Use Case 2: the outcome of one policy, from its documented status (docs/API_CONTRACT.md, Use Case 2).
+ * Use Case 2: the outcome of one policy, from its documented status.
  *
  * <ul>
  *   <li>UAP (Access Control Policies), {@code metadata.status.status}, schema {@code PolicyStatus}: Active, Suspended,

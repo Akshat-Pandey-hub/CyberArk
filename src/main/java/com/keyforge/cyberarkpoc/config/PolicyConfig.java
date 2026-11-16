@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * Settings for Use Case 2 (policy health), separate from the Identity settings of Use Case 1.
  *
- * <p>Two official APIs list the policies (docs/API_CONTRACT.md, Use Case 2):
+ * <p>Two official APIs list the policies:
  * <ul>
  *   <li>{@link Api#UAP}: Access Control Policies, {@code GET https://<subdomain>.uap.cyberark.cloud/api/policies}</li>
  *   <li>{@link Api#SCA}: the SCA Policies API, {@code GET https://<subdomain>.sca.cyberark.cloud/api/policies}. The

@@ -21,7 +21,7 @@ import java.util.Set;
 
 /**
  * Use case 1: every approver role matching the name pattern needs at least {@code minApprovers} direct members and at
- * least {@code minApprovers} verified active users. Contract: docs/API_CONTRACT.md (rules in §8).
+ * least {@code minApprovers} verified active users.
  *
  * <p>Flow: a paged Redrock role search, then per role GetRole (the call the client mail names), the role's members,
  * a User lookup per user member, and the expansion of nested roles.

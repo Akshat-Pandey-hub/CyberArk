@@ -19,7 +19,7 @@ import java.util.Set;
 
 /**
  * Read-only client for the policy list of Use Case 2, authenticated with the custom OAuth2 token
- * ({@link TokenProvider.Style#CUSTOM_OAUTH2}). Contract: docs/API_CONTRACT.md, Use Case 2.
+ * ({@link TokenProvider.Style#CUSTOM_OAUTH2}).
  *
  * <ul>
  *   <li>UAP, {@code GET <base>/policies?limit=&nextToken=}: response {@code {"results": [..], "nextToken", "total"}};

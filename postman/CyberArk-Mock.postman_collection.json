@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "CyberArk integration POC (mock)",
-    "description": "The six CyberArk calls used by the two use cases. Point {{identityBaseUrl}}, {{uapBaseUrl}} and {{tokenUrl}} at the local mock (FABRICATED data) or, later, at a real tenant. Field verification status: docs/API_CONTRACT.md.",
+    "description": "The six CyberArk calls used by the two use cases. Point {{identityBaseUrl}}, {{uapBaseUrl}} and {{tokenUrl}} at the local mock (FABRICATED data) or, later, at a real tenant.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
