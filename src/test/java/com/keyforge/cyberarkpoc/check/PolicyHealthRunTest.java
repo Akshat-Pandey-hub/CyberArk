@@ -44,4 +44,15 @@ class PolicyHealthRunTest {
         assertEquals("CONFIG_ERROR", result.get("status"));
         assertTrue(String.valueOf(result.get("error")).contains("CYBERARK_POLICY_APP_ID"));
     }
+    @Test
+    void bothTablesAreKeyedOnTheApiAndThePolicyId() {
+        assertEquals(java.util.List.of("policy_api", "policy_id"), PolicyHealthRun.KEYS);
+        com.keyforge.cyberarkpoc.store.RawRecordRepository results = new com.keyforge.cyberarkpoc.store.RawRecordRepository(
+                "cyberark", PolicyHealthRun.RESULT_TABLE, PolicyHealthRun.RESULT_COLUMNS, PolicyHealthRun.KEYS);
+        String ddl = results.createTableSql();
+        assertTrue(ddl.contains("\"policy_api\" text NOT NULL"), ddl);
+        assertTrue(ddl.contains("\"policy_id\" text NOT NULL"), ddl);
+        assertTrue(ddl.contains("UNIQUE (\"policy_api\", \"policy_id\")"), ddl);
+        assertTrue(results.upsertSql().contains("ON CONFLICT (\"policy_api\", \"policy_id\")"), results.upsertSql());
+    }
 }

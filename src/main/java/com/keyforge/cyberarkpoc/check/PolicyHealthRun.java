@@ -28,10 +28,13 @@ import java.util.Map;
  * <p>Tables:
  * <ul>
  *   <li>{@code uap_policy}: every policy as returned, one column per top-level field under its exact name
- *       ({@link GenericRecordStore}; nested objects such as {@code metadata} are jsonb), plus our {@code policy_id}
- *       (the key: UAP {@code metadata.policyId}, SCA {@code policyId}) and {@code policy_api}</li>
- *   <li>{@code uap_policy_health_result}: the latest outcome per policy, key {@code policy_id} (our columns)</li>
+ *       ({@link GenericRecordStore}; nested objects such as {@code metadata} are jsonb), plus our {@code policy_api}
+ *       ({@code uap} or {@code sca}) and {@code policy_id} (UAP {@code metadata.policyId}, SCA {@code policyId})</li>
+ *   <li>{@code uap_policy_health_result}: the latest outcome per policy (our columns)</li>
  * </ul>
+ * Both are keyed on {@code (policy_api, policy_id)}, so a UAP and an SCA policy with the same id never overwrite each
+ * other. Tables of earlier versions (keyed on {@code policy_id} alone) are moved to this key in place
+ * ({@link PolicyKeyUpgrade}); no row is changed or deleted.
  *
  * <p>{@code status} describes the retrieval: FAILED (nothing is stored, nothing is concluded), INCOMPLETE (stored,
  * but the list may be partial), COMPLETED_WITH_FAILURES (a policy could not be stored), SUCCESS. {@code health}
@@ -44,6 +47,9 @@ public final class PolicyHealthRun {
     public static final String POLICY_TABLE = "uap_policy";
     public static final String RESULT_TABLE = "uap_policy_health_result";
     public static final String KEY = "policy_id";
+    public static final String API_KEY = "policy_api";
+    /** The key of both tables: one API's policy id never meets the other API's. */
+    public static final List<String> KEYS = List.of(API_KEY, KEY);
 
     public static final List<Column> RESULT_COLUMNS = List.of(
             Column.text("policy_id"), Column.text("policy_api"), Column.text("policy_name"), Column.text("outcome"),
@@ -63,8 +69,8 @@ public final class PolicyHealthRun {
 
     public static Map<String, Object> run(PolicyClient client, DbConfig db) {
         String api = client.api().name().toLowerCase(Locale.ROOT);
-        GenericRecordStore policies = new GenericRecordStore(db.schema(), POLICY_TABLE, List.of(KEY));
-        RawRecordRepository results = new RawRecordRepository(db.schema(), RESULT_TABLE, RESULT_COLUMNS, KEY);
+        GenericRecordStore policies = new GenericRecordStore(db.schema(), POLICY_TABLE, KEYS);
+        RawRecordRepository results = new RawRecordRepository(db.schema(), RESULT_TABLE, RESULT_COLUMNS, KEYS);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("command", COMMAND);
@@ -80,6 +86,7 @@ public final class PolicyHealthRun {
         try (conn) {
             policies.ensureTable(conn);
             results.ensureTable(conn);
+            List<String> keyChanges = PolicyKeyUpgrade.upgrade(conn, db.schema());
             PolicyClient.Listing listing;
             try {
                 listing = client.listPolicies();
@@ -110,7 +117,7 @@ public final class PolicyHealthRun {
                 }
                 ObjectNode record = policy.deepCopy();
                 record.put(KEY, r.policyId());
-                record.put("policy_api", api);
+                record.put(API_KEY, api);
                 recordById.put(r.policyId(), record);
             }
             if (!withoutId.isEmpty()) {
@@ -170,7 +177,9 @@ public final class PolicyHealthRun {
                     .toList());
             body.put("policies", all.stream().map(PolicyHealthRun::json).toList());
             body.put("stored", stored);
-            body.put("schema_changes", prepared.changes());
+            List<String> schemaChanges = new ArrayList<>(keyChanges);
+            schemaChanges.addAll(prepared.changes());
+            body.put("schema_changes", schemaChanges);
             if (firstError != null) {
                 body.put("error", firstError);
             }

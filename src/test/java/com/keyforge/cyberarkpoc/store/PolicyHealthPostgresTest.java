@@ -112,7 +112,8 @@ class PolicyHealthPostgresTest {
             assertEquals(1, count("SELECT count(*) FROM " + t(PolicyHealthRun.POLICY_TABLE) + " WHERE policy_id = 'pol-002'"
                     + " AND metadata->'status'->>'statusCode' = 'MOCK_TARGET_UNREACHABLE' AND policy_api = 'uap'"));
             assertEquals(1, count("SELECT count(*) FROM pg_indexes WHERE schemaname = '" + db.schema()
-                    + "' AND tablename = 'uap_policy' AND indexdef LIKE 'CREATE UNIQUE INDEX%(policy_id)'"));
+                    + "' AND tablename = 'uap_policy' AND indexdef LIKE 'CREATE UNIQUE INDEX%(policy_api, policy_id)'"),
+                    "keyed on the API and the policy id");
             assertEquals(8, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE)));
             assertEquals(1, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_id = 'pol-002'"
                     + " AND outcome = 'FINDING' AND status = 'Error' AND status_code = 'MOCK_TARGET_UNREACHABLE'"
@@ -251,5 +252,152 @@ class PolicyHealthPostgresTest {
                 rest.stop();
             }
         }
+    }
+    // ---- (policy_api, policy_id) key and the upgrade of tables from earlier versions ----------------------------
+
+    private String one(String sql) throws Exception {
+        try (Connection conn = db.open(); Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
+    /** The column sets of the unique indexes of a table, e.g. "policy_api,policy_id". */
+    private Set<String> uniqueKeys(String table) throws Exception {
+        try (Connection conn = db.open(); Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(
+                "SELECT (SELECT string_agg(a.attname::text, ',' ORDER BY a.attname::text) FROM pg_attribute a "
+                        + "WHERE a.attrelid = c.oid AND a.attnum = ANY(i.indkey)) FROM pg_index i "
+                        + "JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        + "WHERE n.nspname = '" + db.schema() + "' AND c.relname = '" + table + "' AND i.indisunique "
+                        + "AND NOT i.indisprimary")) {
+            Set<String> keys = new LinkedHashSet<>();
+            while (rs.next()) {
+                keys.add(rs.getString(1));
+            }
+            return keys;
+        }
+    }
+
+    /**
+     * Creates both tables exactly as earlier versions did (keyed on policy_id alone, through the same store classes)
+     * and stores two UAP policies in them: pol-001 (also returned by the mock) and pol-gone (no longer returned).
+     */
+    private void createOldTables(String gonePolicyApi) throws Exception {
+        GenericRecordStore oldPolicies = new GenericRecordStore(db.schema(), PolicyHealthRun.POLICY_TABLE,
+                List.of(PolicyHealthRun.KEY));
+        RawRecordRepository oldResults = new RawRecordRepository(db.schema(), PolicyHealthRun.RESULT_TABLE,
+                PolicyHealthRun.RESULT_COLUMNS, PolicyHealthRun.KEY);
+        List<JsonNode> records = List.of(
+                MAPPER.readTree("{\"policy_id\":\"pol-001\",\"policy_api\":\"uap\",\"metadata\":{\"name\":\"old\"}}"),
+                MAPPER.readTree("{\"policy_id\":\"pol-gone\",\"policy_api\":" + gonePolicyApi
+                        + ",\"metadata\":{\"name\":\"gone\"}}"));
+        try (Connection conn = db.open()) {
+            oldPolicies.ensureTable(conn);
+            oldResults.ensureTable(conn);
+            GenericRecordStore.Prepared prepared = oldPolicies.prepare(conn, records);
+            for (JsonNode r : records) {
+                oldPolicies.upsert(conn, prepared, r);
+                oldResults.upsert(conn, MAPPER.readTree("{\"policy_id\":\"" + r.get("policy_id").asText()
+                        + "\",\"policy_api\":" + r.get("policy_api") + ",\"outcome\":\"NO_FINDING\"}"));
+            }
+        }
+        assertEquals(Set.of("policy_id"), uniqueKeys(PolicyHealthRun.POLICY_TABLE), "the old key");
+        assertEquals(Set.of("policy_id"), uniqueKeys(PolicyHealthRun.RESULT_TABLE), "the old key");
+    }
+
+    @Test
+    void uapAndScaPoliciesWithTheSameIdAreStoredSideBySide() throws Exception {
+        try (MockFixture f = MockFixture.start(SampleData.demo())) {
+            Map<String, Object> uap = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+            Map<String, Object> sca = PolicyHealthRun.run(f.policyClient(Api.SCA), db);
+            assertEquals("SUCCESS", uap.get("status"), String.valueOf(uap));
+            assertEquals("SUCCESS", sca.get("status"), String.valueOf(sca));
+            assertEquals(Map.of("inserted", 8, "updated", 0, "failed", 0),
+                    ((Map<?, ?>) sca.get("stored")).get(PolicyHealthRun.POLICY_TABLE), "SCA's pol-001..008 are new rows");
+
+            for (String table : List.of(PolicyHealthRun.POLICY_TABLE, PolicyHealthRun.RESULT_TABLE)) {
+                assertEquals(16, count("SELECT count(*) FROM " + t(table)), table + ": 8 UAP + 8 SCA");
+                assertEquals(8, count("SELECT count(*) FROM " + t(table) + " WHERE policy_api = 'uap'"), table);
+                assertEquals(8, count("SELECT count(*) FROM " + t(table) + " WHERE policy_api = 'sca'"), table);
+                assertEquals(Set.of("policy_api,policy_id"), uniqueKeys(table), table);
+            }
+            // each API keeps its own record shape and its own outcome for the same id
+            assertEquals("Error", one("SELECT metadata->'status'->>'status' FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                    + " WHERE policy_api = 'uap' AND policy_id = 'pol-002'"));
+            assertEquals("4", one("SELECT status FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                    + " WHERE policy_api = 'sca' AND policy_id = 'pol-002'"));
+            assertEquals("Error", one("SELECT status FROM " + t(PolicyHealthRun.RESULT_TABLE)
+                    + " WHERE policy_api = 'uap' AND policy_id = 'pol-002'"));
+            assertEquals("Error (4)", one("SELECT status FROM " + t(PolicyHealthRun.RESULT_TABLE)
+                    + " WHERE policy_api = 'sca' AND policy_id = 'pol-002'"));
+
+            String uapUuid = one("SELECT record_uuid FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                    + " WHERE policy_api = 'uap' AND policy_id = 'pol-001'");
+            Map<String, Object> again = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+            assertEquals(Map.of("inserted", 0, "updated", 8, "failed", 0),
+                    ((Map<?, ?>) again.get("stored")).get(PolicyHealthRun.POLICY_TABLE), "the UAP rows are updated");
+            assertEquals(16, count("SELECT count(*) FROM " + t(PolicyHealthRun.POLICY_TABLE)));
+            assertEquals(uapUuid, one("SELECT record_uuid FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                    + " WHERE policy_api = 'uap' AND policy_id = 'pol-001'"), "the same row, updated in place");
+            assertEquals(8, count("SELECT count(*) FROM " + t(PolicyHealthRun.RESULT_TABLE) + " WHERE policy_api = 'sca'"),
+                    "the SCA results are untouched by a UAP run");
+        }
+    }
+
+    @Test
+    void tablesOfEarlierVersionsMoveToTheNewKeyWithoutLosingARow() throws Exception {
+        createOldTables("\"uap\"");
+        String oldUuid = one("SELECT record_uuid FROM " + t(PolicyHealthRun.POLICY_TABLE) + " WHERE policy_id = 'pol-001'");
+
+        try (MockFixture f = MockFixture.start(SampleData.demo())) {
+            Map<String, Object> first = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+            assertEquals("SUCCESS", first.get("status"), String.valueOf(first));
+            assertTrue(first.get("schema_changes").toString().contains(
+                    "uap_policy: unique key moved from (policy_id) to (policy_api, policy_id)"), first.toString());
+            assertTrue(first.get("schema_changes").toString().contains("uap_policy_health_result: unique key moved"));
+            assertEquals(Map.of("inserted", 7, "updated", 1, "failed", 0),
+                    ((Map<?, ?>) first.get("stored")).get(PolicyHealthRun.POLICY_TABLE), "the old pol-001 is updated");
+
+            for (String table : List.of(PolicyHealthRun.POLICY_TABLE, PolicyHealthRun.RESULT_TABLE)) {
+                assertEquals(Set.of("policy_api,policy_id"), uniqueKeys(table), table + ": only the new key");
+                assertEquals(9, count("SELECT count(*) FROM " + t(table)), table + ": 8 policies + the old pol-gone");
+                assertEquals(1, count("SELECT count(*) FROM " + t(table) + " WHERE policy_id = 'pol-gone'"),
+                        table + ": a row no longer returned is kept");
+            }
+            assertEquals(oldUuid, one("SELECT record_uuid FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                    + " WHERE policy_id = 'pol-001'"), "the old row itself is updated, not replaced");
+            assertEquals("NO", one("SELECT is_nullable FROM information_schema.columns WHERE table_schema = '"
+                    + db.schema() + "' AND table_name = '" + PolicyHealthRun.RESULT_TABLE
+                    + "' AND column_name = 'policy_api'"), "as a new result table");
+
+            // the upgrade happens once; later runs (UAP or SCA) change nothing in the keys
+            Map<String, Object> second = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+            assertEquals("SUCCESS", second.get("status"));
+            assertFalse(second.get("schema_changes").toString().contains("unique key moved"), second.toString());
+            Map<String, Object> sca = PolicyHealthRun.run(f.policyClient(Api.SCA), db);
+            assertEquals("SUCCESS", sca.get("status"), String.valueOf(sca));
+            assertFalse(sca.get("schema_changes").toString().contains("unique key moved"));
+            assertEquals(17, count("SELECT count(*) FROM " + t(PolicyHealthRun.POLICY_TABLE)),
+                    "8 UAP + pol-gone + 8 SCA side by side");
+        }
+    }
+
+    @Test
+    void anOldRowWithoutItsApiStopsTheUpgradeAndChangesNothing() throws Exception {
+        createOldTables("null");
+
+        try (MockFixture f = MockFixture.start(SampleData.demo())) {
+            Map<String, Object> result = PolicyHealthRun.run(f.policyClient(Api.UAP), db);
+
+            assertEquals("FAILED", result.get("status"), String.valueOf(result));
+            assertEquals("DATABASE", result.get("error_kind"));
+            assertTrue(String.valueOf(result.get("error")).contains("1 row(s) have no policy_api"), result.toString());
+            assertEquals(0, f.mock.requestCount(MockCyberArkServer.POLICIES), "CyberArk is not called");
+        }
+        for (String table : List.of(PolicyHealthRun.POLICY_TABLE, PolicyHealthRun.RESULT_TABLE)) {
+            assertEquals(Set.of("policy_id"), uniqueKeys(table), table + ": the old key is still in place");
+            assertEquals(2, count("SELECT count(*) FROM " + t(table)), table + ": every row kept");
+        }
+        assertEquals("old", one("SELECT metadata->>'name' FROM " + t(PolicyHealthRun.POLICY_TABLE)
+                + " WHERE policy_id = 'pol-001'"), "nothing was updated");
     }
 }
